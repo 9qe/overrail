@@ -45,6 +45,7 @@ async function main() {
       req.on("end", () => {
         continuation_body = JSON.parse(raw);
         res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(sse("secondary", { content: " fox" }));
         res.write(sse("secondary", { content: " jumps" }));
         res.write(sse("secondary", { content: " over the lazy dog." }));
         res.end(

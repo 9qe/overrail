@@ -18,6 +18,10 @@ Your API keys stay on your computer. Requests go straight from you to the provid
 
 ## Try it in 1 minute (no account, no API key)
 
+<p align="center">
+  <img src="docs/chaos-demo.svg" alt="terminal recording: provider dies mid-sentence, backup finishes it" width="880">
+</p>
+
 You need [Node.js](https://nodejs.org) installed. Open PowerShell (Windows) or Terminal (Mac/Linux) and paste these three lines:
 
 ```bash
@@ -32,7 +36,8 @@ What you'll see: the first provider "dies" after three words, a backup finishes 
 client <- "The"
 client <- " quick"
 client <- " brown"        <- first provider dies here
-client <- " jumps"        <- backup provider takes over, same answer
+client <- " fox"          <- backup provider takes over, same answer
+client <- " jumps"
 client <- " over the lazy dog."
 client <- [DONE]
 ```
@@ -60,7 +65,7 @@ On Mac/Linux (bash), the second line is: `export DEEPSEEK_API_KEY="paste-your-ke
 overrail run deepseek -- claude
 ```
 
-That's Claude Code running on DeepSeek instead of Anthropic. If DeepSeek fails, overrail switches to the next provider you set up. You don't do anything.
+That's Claude Code running on DeepSeek instead of Anthropic. `overrail run` points Claude Code straight at DeepSeek's Anthropic-compatible endpoint — it's provider switching, and it does not go through the gateway. For automatic failover and mid-stream stitching, use the gateway below with tools that speak OpenAI's API (aider, Codex, curl).
 
 *If Windows says `overrail` is not recognized, run commands as `npx github:9qe/overrail <command>` instead.*
 
@@ -85,6 +90,8 @@ Set `OVERRAIL_CHAOS=529` (primary returns overloaded) or `OVERRAIL_CHAOS=midstre
 ## Gateway
 
 `overrail serve` starts a local OpenAI-compatible gateway at http://127.0.0.1:8787. It exposes `POST /v1/chat/completions` and `GET /v1/models`, and binds to 127.0.0.1 only.
+
+It does **not** serve Anthropic's `/v1/messages` — don't point `claude` at it. Use `overrail run` for Claude Code (provider switching only); use the gateway for aider, Codex, and curl (failover and mid-stream stitching).
 
 Point your tools at it:
 
@@ -164,7 +171,7 @@ Planned for vNext, in no particular order:
 
 ## Support
 
-overrail is free and MIT-licensed, and the core stays that way. If it saves you a mid-task provider migration, sponsor the work at https://github.com/sponsors/9qe. The full monetization plan is documented in [docs/MONETIZATION.md](docs/MONETIZATION.md).
+overrail is free and MIT-licensed, and the core stays that way. If it saves you a mid-task provider migration, sponsor the work at https://github.com/sponsors/9qe.
 
 ## License
 

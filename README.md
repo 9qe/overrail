@@ -1,14 +1,24 @@
 # overrail
 
-**Kill an LLM provider mid-sentence. Your agent keeps streaming.**
+**Your AI tool dies when the provider fails. overrail keeps it alive — even mid-answer.**
 
 <p align="center">
   <img src="docs/banner.svg" alt="overrail banner" width="880">
 </p>
 
-Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first, MIT. v0.2.0. Not on npm yet — install straight from GitHub.
+Free and open source (MIT). Runs entirely on your computer. v0.2.0.
 
-## Watch a provider die mid-sentence — 30 seconds, no API keys
+## What it does, in plain English
+
+1. You use an AI coding tool (like Claude Code) with one AI provider (like DeepSeek).
+2. Sometimes that provider rate-limits you, or its connection just drops. Your tool freezes or errors out — often halfway through an answer you already paid for.
+3. overrail sits in between. When the provider fails, it quietly switches to a backup. If the answer was half-finished, the backup picks up exactly where it stopped. You see one uninterrupted answer.
+
+Your API keys stay on your computer. Requests go straight from you to the provider — nowhere else.
+
+## Try it in 1 minute (no account, no API key)
+
+You need [Node.js](https://nodejs.org) installed. Open PowerShell (Windows) or Terminal (Mac/Linux) and paste these three lines:
 
 ```bash
 git clone https://github.com/9qe/overrail.git
@@ -16,45 +26,61 @@ cd overrail
 node examples/chaos-demo.js
 ```
 
-The demo kills the primary mock upstream after three tokens. The next provider receives the partial reply as an assistant prefill and continues on the same client stream:
+What you'll see: the first provider "dies" after three words, a backup finishes the sentence, and your side never shows an error:
 
 ```
 client <- "The"
 client <- " quick"
-client <- " brown"
-client <- " jumps"
+client <- " brown"        <- first provider dies here
+client <- " jumps"        <- backup provider takes over, same answer
 client <- " over the lazy dog."
-client <- finish_reason=stop, merged usage: {"prompt_tokens":12,"completion_tokens":6}
-client <- [DONE] (exactly one, after the full stitched reply)
+client <- [DONE]
 ```
 
-Against real providers, set `OVERRAIL_CHAOS=529` (primary returns overloaded) or `OVERRAIL_CHAOS=midstream_drop@100` (primary's socket dies after 100 content events) and run any request through `overrail serve`.
+That's the whole idea. Everything below is about using it with real providers.
 
-## Why not LiteLLM, OpenRouter, or another proxy
+## Use it with your own AI provider
+
+Three steps. DeepSeek is the example here; Kimi, OpenRouter, and Ollama work the same way.
+
+**Step 1 — get an API key.** Sign up at https://platform.deepseek.com and create a key. An API key is just a password that lets apps use your account.
+
+**Step 2 — set up overrail.** Open PowerShell and run:
+
+```powershell
+npx github:9qe/overrail init
+$env:DEEPSEEK_API_KEY = "paste-your-key-here"
+```
+
+On Mac/Linux (bash), the second line is: `export DEEPSEEK_API_KEY="paste-your-key-here"`
+
+**Step 3 — start your tool through overrail:**
+
+```powershell
+overrail run deepseek -- claude
+```
+
+That's Claude Code running on DeepSeek instead of Anthropic. If DeepSeek fails, overrail switches to the next provider you set up. You don't do anything.
+
+*If Windows says `overrail` is not recognized, run commands as `npx github:9qe/overrail <command>` instead.*
+
+---
+
+## For developers
+
+**Kill an LLM provider mid-sentence. Your agent keeps streaming.**
+
+Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first. Not on npm yet — install straight from GitHub.
+
+### Why not LiteLLM, OpenRouter, or another proxy
 
 - **No cloud middleman.** Keys stay in your environment; requests go from your machine straight to the provider. Nothing phones home.
 - **No dependency tree.** Zero dependencies, CommonJS, small enough to audit in one sitting. No Python, no Docker, no SDK.
 - **Mid-stream stitching, not just retries.** Catching a 429 before the first token is table stakes. overrail also catches a severed SSE socket mid-generation and stitches the remainder via assistant prefill — so a 400-line file at token 300 doesn't die at token 300, and you don't pay twice for the tokens you already received.
 
-## Quickstart
+### Chaos testing against real providers
 
-PowerShell:
-
-```powershell
-npx github:9qe/overrail init
-$env:DEEPSEEK_API_KEY = "your-key-here"   # get a key at https://platform.deepseek.com
-overrail run deepseek -- claude
-```
-
-bash:
-
-```bash
-npx github:9qe/overrail init
-export DEEPSEEK_API_KEY="your-key-here"   # get a key at https://platform.deepseek.com
-overrail run deepseek -- claude
-```
-
-If `overrail` is not on your PATH, run commands as `npx github:9qe/overrail <command>`.
+Set `OVERRAIL_CHAOS=529` (primary returns overloaded) or `OVERRAIL_CHAOS=midstream_drop@100` (primary's socket dies after 100 content events) and run any request through `overrail serve`. `node examples/chaos-demo.js` runs the same demo against local mock upstreams, no keys needed.
 
 ## Gateway
 

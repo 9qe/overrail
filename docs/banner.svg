@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="200" viewBox="0 0 880 200" role="img" aria-labelledby="t2">
+  <title id="t2">agentrouter banner</title>
+  <defs>
+    <clipPath id="arCard">
+      <rect x="0.5" y="0.5" width="879" height="199" rx="12"/>
+    </clipPath>
+  </defs>
+  <!-- card -->
+  <rect x="0.5" y="0.5" width="879" height="199" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <!-- single accent: left border bar -->
+  <rect x="0" y="0" width="6" height="200" fill="#58a6ff" clip-path="url(#arCard)"/>
+  <g font-family="'Cascadia Code', Consolas, monospace">
+    <text x="52" y="94" font-size="46" font-weight="700" fill="#e6edf3">agentrouter</text>
+    <text x="52" y="136" font-size="19" fill="#8b949e">Any agent. Any model. One command - with failover.</text>
+  </g>
+</svg>

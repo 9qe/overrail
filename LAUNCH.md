@@ -12,7 +12,7 @@ Candidate titles:
 
 Post body:
 
-agentrouter is a zero-dependency Node.js CLI (MIT, Windows-first, Node >= 18) that does two things. First, env injection: `agentrouter run deepseek -- claude` launches Claude Code pointed at DeepSeek using your own DEEPSEEK_API_KEY — no config surgery, no exporting env vars by hand. Second, a local gateway: `agentrouter serve` starts an OpenAI-compatible endpoint at http://127.0.0.1:8787 (POST /v1/chat/completions, GET /v1/models). If a provider returns 429 or 5xx, or the connection drops, the gateway fails over down the chain: deepseek -> kimi -> openrouter. Every gateway request is logged to ~/.agentrouter/usage.jsonl, viewable with `agentrouter usage`.
+agentrouter is a zero-dependency Node.js CLI (MIT, Windows-first, Node >= 18) that does two things. First, env injection: `agentrouter run deepseek -- claude` launches Claude Code pointed at DeepSeek using your own DEEPSEEK_API_KEY — no config surgery, no exporting env vars by hand. Second, a local gateway: `agentrouter serve` starts an OpenAI-compatible endpoint at http://127.0.0.1:8787 (POST /v1/chat/completions, GET /v1/models). If a provider returns 429, 500, 502, 503, or 504, or the connection drops, the gateway fails over down the chain: deepseek -> kimi -> openrouter -> ollama. Gateway requests are logged to ~/.agentrouter/usage.jsonl, viewable with `agentrouter usage`.
 
 Built because agent CLIs are wired to one vendor, and switching mid-task means env-var archaeology and lost work. A rate limit should not end a coding session. Honest about v0.1.0 scope: env injection, the gateway, failover chains, and the usage log all work today. No tray app yet, no cost estimates, no smart routing — that is the roadmap. Not on npm yet, so install is `npx github:9qe/agentrouter init`. Keys never leave your machine, there is no telemetry, and the gateway binds to 127.0.0.1 only.
 
@@ -32,7 +32,7 @@ agentrouter — a zero-dependency CLI that puts a local OpenAI-compatible gatewa
 
 Body:
 
-If you run ollama, agentrouter gives your coding agents one endpoint to talk to: a local OpenAI-compatible gateway on http://127.0.0.1:8787, with an ollama profile (http://localhost:11434/v1, no API key). The local chain is just `ollama`. When you do want a hosted model, the default failover chain is deepseek -> kimi -> openrouter.
+If you run ollama, agentrouter gives your coding agents one endpoint to talk to: a local OpenAI-compatible gateway on http://127.0.0.1:8787, with an ollama profile (http://localhost:11434/v1, no API key). The local chain is just `ollama`. When you do want a hosted model, the default failover chain is deepseek -> kimi -> openrouter -> ollama.
 
 What it is: a zero-dependency Node.js CLI, MIT, Windows-first. `agentrouter serve` starts the gateway (POST /v1/chat/completions, GET /v1/models). The `model` field takes `ollama` or `ollama/<model>`. `agentrouter run <profile> -- claude` injects the profile's environment and launches Claude Code on it. Usage is logged to ~/.agentrouter/usage.jsonl (`agentrouter usage`).
 
@@ -60,11 +60,11 @@ agentrouter serve
 
 A local OpenAI-compatible gateway on 127.0.0.1:8787. Point curl, aider, or codex at it.
 
-If deepseek rate-limits or drops, it fails over automatically: deepseek -> kimi -> openrouter.
+If deepseek rate-limits or drops, it fails over automatically: deepseek -> kimi -> openrouter -> ollama.
 
 Post 3:
 
-Every request is logged to ~/.agentrouter/usage.jsonl. Run agentrouter usage to see the table.
+Requests are logged to ~/.agentrouter/usage.jsonl. Run agentrouter usage to see the table.
 
 Keys never leave your machine. No telemetry. Nothing runs in the background.
 

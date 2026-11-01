@@ -2,6 +2,13 @@
 
 **Any agent. Any model. One command — with failover.**
 
+<p align="center">
+  <img src="docs/banner.svg" alt="agentrouter banner" width="880">
+</p>
+<p align="center">
+  <img src="docs/demo-terminal.svg" alt="agentrouter terminal demo" width="880">
+</p>
+
 Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first, MIT. v0.1.0. Not on npm yet — install straight from GitHub.
 
 ## Why
@@ -45,7 +52,7 @@ claude   codex   aider   curl
     http://127.0.0.1:8787
              |
              v
-  deepseek -> kimi -> openrouter
+  deepseek -> kimi -> openrouter -> ollama
      (automatic failover)
 ```
 
@@ -57,7 +64,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
   -d '{"model":"deepseek","messages":[{"role":"user","content":"What is 2+2?"}]}'
 ```
 
-If a provider returns 429 or 5xx, or the connection fails, the gateway moves to the next profile in the chain. Default chain: `deepseek -> kimi -> openrouter`. Local chain: `ollama`. The `model` field in gateway calls takes `<profile>` (for example `deepseek`) or `<profile>/<model>`.
+If a provider returns 429, 500, 502, 503, or 504, or the connection fails, the gateway moves to the next profile in the chain. Default chain: `deepseek -> kimi -> openrouter -> ollama`. Local chain: `ollama`. The `model` field in gateway calls takes `<profile>` (for example `deepseek`) or `<profile>/<model>`.
 
 ## Built-in profiles
 
@@ -87,8 +94,8 @@ If a provider returns 429 or 5xx, or the connection fails, the gateway moves to 
 
 - **Env injection.** `agentrouter run deepseek -- claude` launches Claude Code pointed at DeepSeek using your own `DEEPSEEK_API_KEY`. Your workflow does not change; the model under it does.
 - **Local gateway.** `agentrouter serve` runs an OpenAI-compatible endpoint (`POST /v1/chat/completions`, `GET /v1/models`) on http://127.0.0.1:8787, bound to 127.0.0.1 only.
-- **Failover.** When a provider returns 429 or 5xx, or the network errors out, the gateway moves to the next profile in the chain. Default: `deepseek -> kimi -> openrouter`. Local: `ollama`.
-- **Usage log.** Every gateway request is appended to `~/.agentrouter/usage.jsonl`. Run `agentrouter usage` to view it.
+- **Failover.** When a provider returns 429, 500, 502, 503, or 504, or the network errors out, the gateway moves to the next profile in the chain. Default: `deepseek -> kimi -> openrouter -> ollama`. Local: `ollama`.
+- **Usage log.** Gateway requests are appended to `~/.agentrouter/usage.jsonl` (provider, model, and token counts; streaming responses are not logged). Run `agentrouter usage` to view it.
 
 ### Design
 

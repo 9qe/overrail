@@ -3,10 +3,14 @@
 **Your AI tool dies when the provider fails. overrail keeps it alive — even mid-answer.**
 
 <p align="center">
+  <a href="https://github.com/9qe/overrail/actions/workflows/ci.yml"><img src="https://github.com/9qe/overrail/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+</p>
+
+<p align="center">
   <img src="docs/banner.svg" alt="overrail banner" width="880">
 </p>
 
-Free and open source (MIT). Runs entirely on your computer. v0.3.0.
+Free and open source (MIT). Runs entirely on your computer. v0.4.0.
 
 ## What it does, in plain English
 
@@ -65,7 +69,7 @@ On Mac/Linux (bash), the second line is: `export DEEPSEEK_API_KEY="paste-your-ke
 overrail run deepseek -- claude
 ```
 
-That's Claude Code running on DeepSeek instead of Anthropic. `overrail run` points Claude Code straight at DeepSeek's Anthropic-compatible endpoint — it's provider switching, and it does not go through the gateway. For automatic failover and mid-stream stitching, use the gateway below with tools that speak OpenAI's API (aider, Codex, curl).
+That's Claude Code running on DeepSeek instead of Anthropic. `overrail run` points Claude Code straight at DeepSeek's Anthropic-compatible endpoint — it's provider switching, and it does not go through the gateway. For automatic failover and mid-stream stitching, use the gateway: it now speaks Anthropic's `/v1/messages` as well as OpenAI's `/v1/chat/completions`, so aider, Codex, curl and Claude Code can all sit behind it.
 
 *If Windows says `overrail` is not recognized, run `npm i -g overrail` once, or prefix commands with `npx overrail`.*
 
@@ -81,7 +85,23 @@ Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first. Install: `npm
 
 - **No cloud middleman.** Keys stay in your environment; requests go from your machine straight to the provider. Nothing phones home.
 - **No dependency tree.** Zero dependencies, CommonJS, small enough to audit in one sitting. No Python, no Docker, no SDK.
-- **Mid-stream stitching, not just retries.** Most routers retry requests that fail before the first token. overrail also catches a severed SSE socket mid-generation and stitches the remainder via assistant prefill, including tool calls, so a 400-line file at token 300 doesn't die at token 300 and you don't pay twice for the tokens you already received.
+- **Mid-stream stitching, not just retries.** Most routers retry requests that fail before the first token. overrail also catches a severed SSE socket mid-generation and stitches the remainder via assistant prefill, including tool calls, so a 400-line file at token 300 doesn't die at token 300. The tokens already streamed are not regenerated; the backup only produces the remainder. (Both legs can still *bill* for their own partial output — see "What is proven".)
+
+### What is proven, and what is not
+
+Proven by the local suite (82 tests) and `examples/recovery-benchmark.js`, all against fake upstreams on localhost:
+
+- An 8,000-delta stream killed at delta 4,000 and at delta 7,900 reassembles **byte-identical** to the scripted answer, with exactly one `[DONE]`, one finish event, one tool call, and merged usage. Measured client-observed stall across the stitch: **16–34 ms**.
+- Malformed SSE, invalid frames, comments, keep-alives, multi-line `data:` payloads, UTF-8 sequences split across network chunks, usage-only chunks and a clean upstream end without `[DONE]` are all handled without corrupting the stream.
+- Anthropic `/v1/messages` request/response/stream translation, including `tool_use` blocks.
+- The recovery journal records what was emitted and what a client acknowledged, and never writes prompt text or tool arguments.
+
+Not proven, stated plainly:
+
+- **No live-provider evidence yet.** `node examples/live-provider-matrix.js` currently reports 32/32 cases skipped (`evidence_valid: false`) because the keys on this machine are unfunded and Ollama isn't installed. Everything above is local simulation against upstreams that implement our reading of the published SSE contract.
+- **No exactly-once side effects.** overrail can prove what *it* emitted and what a cooperating client acknowledged. It cannot prove that a non-cooperating client didn't execute a tool twice, and it cannot un-run a side effect. See [docs/recovery-semantics.md](docs/recovery-semantics.md).
+- **Cross-provider continuation is best effort.** A backup provider finishing another provider's sentence is not the same model making the same decision; the remainder can differ semantically.
+- **Double billing is possible.** The primary is charged for what it streamed before dying, the backup for the remainder.
 
 ### Chaos testing against real providers
 
@@ -89,14 +109,21 @@ Set `OVERRAIL_CHAOS=529` (primary returns overloaded) or `OVERRAIL_CHAOS=midstre
 
 ## Gateway
 
-`overrail serve` starts a local OpenAI-compatible gateway at http://127.0.0.1:8787. It exposes `POST /v1/chat/completions` and `GET /v1/models`, and binds to 127.0.0.1 only.
+`overrail serve` starts a local gateway at http://127.0.0.1:8787, bound to 127.0.0.1 only. It speaks two dialects:
 
-It does **not** serve Anthropic's `/v1/messages` — don't point `claude` at it. Use `overrail run` for Claude Code (provider switching only); use the gateway for aider, Codex, and curl (failover and mid-stream stitching).
+| route | dialect | notes |
+|---|---|---|
+| `POST /v1/chat/completions` | OpenAI | failover + mid-stream stitching, streamed and non-streamed |
+| `GET /v1/models` | OpenAI | one entry per configured profile |
+| `POST /v1/messages` | Anthropic | Messages API translation (system blocks, `tool_use` / `tool_result`, `input_schema`, streaming events) on top of the same failover engine |
+| `POST /v1/recovery/:id/ack` | overrail | opt-in execution acknowledgement, see below |
+
+That means Claude Code can be pointed at the gateway (`ANTHROPIC_BASE_URL=http://127.0.0.1:8787`) and get failover and mid-stream stitching, not just provider switching. The translation is covered by the local test suite, not by live-provider runs yet — if Claude Code does something the suite doesn't model, expect it to show up as a translation gap rather than a silent success. `overrail run` remains the simpler path when you only want one provider swapped in.
 
 Point your tools at it:
 
 ```
- aider   codex   curl   continue
+ aider   codex   curl   claude code
    \       |      |       /
     \      |      |      /
      +-----+------+-----+
@@ -104,6 +131,7 @@ Point your tools at it:
              v
       overrail serve
     http://127.0.0.1:8787
+   /v1/chat/completions + /v1/messages
              |
              v
   deepseek -> kimi -> openrouter -> ollama
@@ -116,9 +144,34 @@ Test it with curl:
 curl http://127.0.0.1:8787/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek","messages":[{"role":"user","content":"What is 2+2?"}]}'
+
+curl http://127.0.0.1:8787/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek","max_tokens":64,"messages":[{"role":"user","content":"What is 2+2?"}]}'
 ```
 
-If a provider returns 429, 500, 502, 503, or 504, or the connection fails, the gateway moves to the next profile in the chain. Default chain: `deepseek -> kimi -> openrouter -> ollama`. Local chain: `ollama`. The `model` field in gateway calls takes `<profile>` (for example `deepseek`) or `<profile>/<model>`.
+If a provider returns 429, 500, 502, 503, 504, or 529, or the connection fails, the gateway moves to the next profile in the chain. Default chain: `deepseek -> kimi -> openrouter -> ollama`. Local chain: `ollama`. The `model` field in gateway calls takes `<profile>` (for example `deepseek`) or `<profile>/<model>`.
+
+### Durable tool recovery (opt-in)
+
+Send an idempotency key and the gateway journals the tool calls it emitted, then answers `x-overrail-recovery-id`:
+
+```bash
+curl http://127.0.0.1:8787/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: run-42-step-3" \
+  -d '{"model":"deepseek","stream":true,"messages":[...],"tools":[...]}'
+```
+
+After the client actually runs a call, it says so:
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/recovery/<recovery-id>/ack \
+  -H "Content-Type: application/json" \
+  -d '{"tool_call_id":"call_abc"}'
+```
+
+On the next request with the same key, continuation history distinguishes four states — executed (acknowledged), delivered but unacknowledged (side-effect state unknown, do not repeat), generated but never delivered (regenerate), and abandoned. The journal is append-only JSONL at `~/.overrail/recovery.jsonl` (`OVERRAIL_RECOVERY_DIR` overrides) and stores **metadata only**: recovery id, request hash, tool-call id, function name, a SHA-256 of the arguments, phase, provider, and timestamp. Prompts and arguments are never written to disk. Requests without the header behave exactly as before. Full semantics and limits: [docs/recovery-semantics.md](docs/recovery-semantics.md).
 
 ## Built-in profiles
 
@@ -147,12 +200,24 @@ If a provider returns 429, 500, 502, 503, or 504, or the connection fails, the g
 ## How it works
 
 - **Env injection.** `overrail run deepseek -- claude` launches Claude Code pointed at DeepSeek using your own `DEEPSEEK_API_KEY`. Your workflow does not change; the model under it does.
-- **Local gateway.** `overrail serve` runs an OpenAI-compatible endpoint (`POST /v1/chat/completions`, `GET /v1/models`) on http://127.0.0.1:8787, bound to 127.0.0.1 only.
+- **Local gateway.** `overrail serve` runs on http://127.0.0.1:8787, bound to 127.0.0.1 only, with two dialects: OpenAI (`POST /v1/chat/completions`, `GET /v1/models`) and Anthropic (`POST /v1/messages`).
 - **Failover.** When a provider returns 429, 500, 502, 503, 504, or 529, or the network errors out, the gateway moves to the next profile in the chain. Default: `deepseek -> kimi -> openrouter -> ollama`. Local: `ollama`.
-- **Mid-stream failover.** If the upstream socket dies mid-response, the gateway replays your messages plus the partial reply as an assistant prefill (DeepSeek: `prefix: true` on its beta endpoint; providers that reject a trailing assistant message get a constrained continue prompt instead). The client sees one continuous response, a single `[DONE]`, and merged token usage.
-- **Tool-call recovery.** Tool-call arguments are buffered until the JSON is complete, with SSE keep-alives during long calls. Because partial calls never reach the client, a drop mid-tool-call just discards the buffer and regenerates the call on the backup provider. Calls that already completed are passed to the backup as finished history, so they're never generated twice.
+- **Mid-stream failover.** If the upstream socket dies mid-response, the gateway replays your messages plus the partial reply as an assistant prefill (DeepSeek: `prefix: true` on its beta endpoint; providers that reject a trailing assistant message get a constrained continue prompt instead). The client sees one continuous response, a single `[DONE]`, and merged token usage. Continuation across providers is best-effort: the backup finishes the sentence, but it is a different model and the remainder can differ semantically.
+- **Tool-call recovery.** Tool-call arguments are buffered until the JSON is complete, with SSE keep-alives during long calls. Because partial calls never reach the client, a drop mid-tool-call discards the buffer and regenerates the call on the backup provider. Calls that already completed are passed to the backup as finished history, so they're never generated twice *by the gateway*. With an `Idempotency-Key`, that hand-off becomes durable across requests (see "Durable tool recovery").
+- **Recovery framing, verified.** The SSE reader holds one `StringDecoder` per stream, so a UTF-8 sequence split across network chunks arrives intact, and every outgoing frame re-prefixes each `data:` line, so multi-line payloads survive. Both were real bugs, both are reproduced and covered by `test/edge-stream.test.js`.
 - **Chaos testing.** Set `OVERRAIL_CHAOS=529` to make the first upstream attempt return 529, or `OVERRAIL_CHAOS=midstream_drop@100` to kill the primary stream after 100 content events. Reproduce a failover on your own machine in 30 seconds, no real outage required.
 - **Usage log.** Gateway requests are appended to `~/.overrail/usage.jsonl` (provider, model, and token counts; streaming responses are logged when the upstream reports usage). Run `overrail usage` to view it.
+
+## Tests and evidence
+
+```bash
+npm test                                   # 82 tests, no network, no keys
+node examples/chaos-demo.js                # visible mid-stream stitch on localhost mocks
+node examples/recovery-benchmark.js --out docs/benchmark-results.json
+node examples/live-provider-matrix.js      # real providers; needs funded keys (currently BLOCKED)
+```
+
+Suites: `test/edge-stream.test.js` (malformed SSE, UTF-8 splits, multi-line frames, usage-only chunks), `test/midstream.test.js` (stitching, tool buffering), `test/anthropic.test.js` + `test/anthropic-gateway.test.js` (translation and end-to-end `/v1/messages`), `test/recovery.test.js` + `test/recovery-gateway.test.js` (journal, ack route, idempotency), plus gateway/failover/config/usage. Methodology and limits: [docs/benchmarks.md](docs/benchmarks.md), [docs/provider-matrix.md](docs/provider-matrix.md), [docs/recovery-semantics.md](docs/recovery-semantics.md).
 
 ### Design
 
@@ -163,12 +228,15 @@ If a provider returns 429, 500, 502, 503, or 504, or the connection fails, the g
 
 ## Roadmap
 
-Planned for vNext, in no particular order:
+Planned for vNext, in order:
 
-- Windows tray app
-- Cost estimates with an editable price table
-- Smart task-based model routing
-- Profile support for more agents
+1. Live-provider proof: run `examples/live-provider-matrix.js` against funded DeepSeek + a second provider and commit the sanitized results, including a TCP-level kill at random byte offsets.
+2. Anthropic translation hardening against real Claude Code traffic once (1) exists.
+3. Windows tray app.
+4. Cost estimates with an editable price table.
+5. Smart task-based model routing.
+
+The order is deliberate: reliability evidence first, convenience features second.
 
 ## Support
 

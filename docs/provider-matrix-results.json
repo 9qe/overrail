@@ -1,0 +1,280 @@
+{
+  "kind": "overrail-provider-matrix",
+  "generated_at": "2026-11-01T05:27:48.593Z",
+  "node": "v24.11.0",
+  "opt_in_rate_limit": false,
+  "providers_present": [
+    "deepseek",
+    "kimi",
+    "openrouter",
+    "ollama"
+  ],
+  "note": "keys are read from the environment and never written to this file; all detail strings pass through scrub()",
+  "results": [
+    {
+      "provider": "deepseek",
+      "key_env": "DEEPSEEK_API_KEY",
+      "key_present": false,
+      "default_model": "deepseek-chat",
+      "cases": [
+        {
+          "case": "models-probe",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "non-stream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "stream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "tool-call",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "malformed-upstream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "rate-limit",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "long-context",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "usage-reconcile",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set DEEPSEEK_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "provider": "kimi",
+      "key_env": "MOONSHOT_API_KEY",
+      "key_present": false,
+      "default_model": "kimi-k2",
+      "cases": [
+        {
+          "case": "models-probe",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "non-stream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "stream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "tool-call",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "malformed-upstream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "rate-limit",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "long-context",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "usage-reconcile",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set MOONSHOT_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "provider": "openrouter",
+      "key_env": "OPENROUTER_API_KEY",
+      "key_present": false,
+      "default_model": "anthropic/claude-sonnet-4.5",
+      "cases": [
+        {
+          "case": "models-probe",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "non-stream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "stream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "tool-call",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "malformed-upstream",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "rate-limit",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "long-context",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        },
+        {
+          "case": "usage-reconcile",
+          "status": "SKIP-MISSING-KEY",
+          "classification": "set OPENROUTER_API_KEY in the environment",
+          "latency_ms": 0,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "provider": "ollama",
+      "key_env": null,
+      "key_present": true,
+      "default_model": "qwen3:8b",
+      "cases": [
+        {
+          "case": "models-probe",
+          "status": "SKIP-UNREACHABLE",
+          "classification": "network-unreachable",
+          "detail": "fetch failed",
+          "latency_ms": 0
+        },
+        {
+          "case": "non-stream",
+          "http_status": 502,
+          "status": "SKIP-UNREACHABLE",
+          "classification": "network-unreachable (gateway-wrapped)",
+          "detail": "{\"error\":{\"message\":\"all providers failed\",\"details\":[{\"profile\":\"ollama\",\"error\":\"ollama: fetch failed (ECONNREFUSED)\"}]}}",
+          "latency_ms": 36
+        },
+        {
+          "case": "stream",
+          "status": "SKIP-UNREACHABLE",
+          "classification": "blocked-by-non-stream",
+          "latency_ms": 0,
+          "detail": "network-unreachable (gateway-wrapped)"
+        },
+        {
+          "case": "tool-call",
+          "status": "SKIP-UNREACHABLE",
+          "classification": "blocked-by-non-stream",
+          "latency_ms": 0,
+          "detail": "network-unreachable (gateway-wrapped)"
+        },
+        {
+          "case": "rate-limit",
+          "status": "SKIP-UNREACHABLE",
+          "classification": "blocked-by-non-stream",
+          "latency_ms": 0,
+          "detail": "network-unreachable (gateway-wrapped)"
+        },
+        {
+          "case": "long-context",
+          "status": "SKIP-UNREACHABLE",
+          "classification": "blocked-by-non-stream",
+          "latency_ms": 0,
+          "detail": "network-unreachable (gateway-wrapped)"
+        },
+        {
+          "case": "malformed-upstream",
+          "status": "SKIP",
+          "classification": "not-applicable",
+          "latency_ms": 0,
+          "detail": "cannot inject malformed SSE frames at a real provider; covered locally by test/edge-stream.test.js"
+        },
+        {
+          "case": "usage-reconcile",
+          "status": "SKIP",
+          "classification": "depends-on-non-stream",
+          "latency_ms": 0,
+          "detail": "non-stream case was SKIP-UNREACHABLE"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_cases": 32,
+    "pass": 0,
+    "fail": 0,
+    "skipped": 32,
+    "funded_providers": [],
+    "evidence_valid": false
+  }
+}

@@ -1,6 +1,6 @@
 # overrail launch kit
 
-Everything needed to announce v0.3.0. Record the GIF first, then post. Repo: https://github.com/9qe/overrail
+Everything needed to announce v0.4.0. Record the GIF first, then post. Repo: https://github.com/9qe/overrail
 
 ## Show HN
 
@@ -16,7 +16,7 @@ overrail is a zero-dependency Node.js gateway (MIT, `npx overrail init`) that ca
 
 Try it without keys: clone the repo and run `node examples/chaos-demo.js`. Against real providers: `OVERRAIL_CHAOS=midstream_drop@100`.
 
-Scope: OpenAI-compatible chat-completions only. No /v1/messages yet, so Claude Code uses `overrail run` (provider switching, no failover). Keys never leave localhost. No telemetry. Gateway binds to 127.0.0.1.
+Scope, honestly: all of the above is verified against local mock upstreams (82 tests, plus a benchmark that kills an 8,000-delta stream at delta 4,000 and 7,900 and reassembles byte-identical output with a 16-34 ms client-visible stall). v0.4.0 also serves Anthropic `/v1/messages`, so Claude Code can sit behind the gateway and get failover too, and there is an opt-in durable recovery journal (`Idempotency-Key` + `POST /v1/recovery/:id/ack`, metadata only — never prompts or tool arguments). What we have NOT done: a funded live-provider matrix. `examples/live-provider-matrix.js` exists and reports 32/32 skipped with `evidence_valid: false` on this bench. We are not claiming provider compatibility until that file shows PASS rows. Keys never leave localhost. No telemetry. Gateway binds to 127.0.0.1.
 
 Etiquette:
 
@@ -40,7 +40,7 @@ What it is: a zero-dependency Node.js CLI, MIT, Windows-first. `overrail serve` 
 
 Privacy: the gateway binds 127.0.0.1 only, there is no telemetry, and with the ollama profile requests never leave your machine. Hosted-profile keys stay on your machine too.
 
-Honest scope: v0.1.0 — CLI, gateway, failover, usage log. No tray app yet. Install: `npx overrail init`. Repo: https://github.com/9qe/overrail
+Honest scope: v0.4.0 — CLI, gateway (OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`), failover, mid-stream stitching, usage log. No tray app yet, no funded live-provider matrix yet. Install: `npx overrail init`. Repo: https://github.com/9qe/overrail
 
 ## X / Twitter thread
 
@@ -70,7 +70,7 @@ Requests are logged to ~/.overrail/usage.jsonl. Run overrail usage to see the ta
 
 Keys never leave your machine. No telemetry. Nothing runs in the background.
 
-v0.1.0 — try it: npx overrail init
+v0.4.0 — try it: npx overrail init
 
 ## GIF to record
 

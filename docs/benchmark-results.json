@@ -1,0 +1,41 @@
+{
+  "kind": "overrail-recovery-benchmark",
+  "generated_at": "2026-11-01T12:18:49.739Z",
+  "node": "v24.11.0",
+  "platform": "win32 x64",
+  "methodology": "local fake upstreams through the real gateway; primary streams TOTAL paced deltas, relay forces a mid-stream drop after DROP_AT forwarded content events (OVERRAIL_CHAOS=midstream_drop@N), backup derives the continuation point from the prefill it received, streams the remainder and emits one tool call",
+  "config": {
+    "total_deltas": 8000,
+    "drop_at": 4000,
+    "pacing": "500 deltas/tick @ 1ms"
+  },
+  "metrics": {
+    "first_byte_latency_ms": 124,
+    "failover_gap_ms": 34,
+    "backup_setup_ms": 190,
+    "total_ms": 364,
+    "raw_bytes_client_received": 1367631,
+    "content_deltas": 8000,
+    "content_chars": 46890,
+    "done_markers": 1,
+    "finish_events": 1,
+    "primary_requests": 1,
+    "backup_requests": 1,
+    "memory": {
+      "rss_start_mb": 51.4,
+      "peak_rss_mb": 74.3,
+      "rss_end_mb": 67.7,
+      "note": "gateway+upstreams+client share this process; peak delta tracks buffering, not stream size"
+    }
+  },
+  "verification": {
+    "exact_stitch": true,
+    "single_done": true,
+    "single_finish_event": true,
+    "tool_call_once": true,
+    "tool_args_valid": true,
+    "usage_present": true,
+    "no_unparsed_events": true,
+    "pass": true
+  }
+}

@@ -3,13 +3,59 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [18, 20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  benchmark:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: node --test
+          node-version: 22
+      - name: 8k-delta mid-stream recovery benchmark (drop at 4000)
+        run: node examples/recovery-benchmark.js --out docs/benchmark-results.json
+      - name: 8k-delta mid-stream recovery benchmark (drop at 7900)
+        run: node examples/recovery-benchmark.js --out docs/benchmark-results-late-drop.json
+        env:
+          OVERRAIL_BENCH_DROP_AT: 7900
+      - name: chaos demo end-to-end stitch
+        run: node examples/chaos-demo.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: docs/benchmark-results*.json
+
+  provider-matrix:
+    # opt-in only: real traffic, real spend. Without secrets the runner reports
+    # every case skipped and exits non-zero by design, so the job is skipped.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node examples/live-provider-matrix.js --out docs/provider-matrix-results.json
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: provider-matrix-results
+          path: docs/provider-matrix-results.json

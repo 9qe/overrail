@@ -53,7 +53,7 @@ Three steps. DeepSeek is the example here; Kimi, OpenRouter, and Ollama work the
 **Step 2 — set up overrail.** Open PowerShell and run:
 
 ```powershell
-npx github:9qe/overrail init
+npx overrail init
 $env:DEEPSEEK_API_KEY = "paste-your-key-here"
 ```
 
@@ -67,7 +67,7 @@ overrail run deepseek -- claude
 
 That's Claude Code running on DeepSeek instead of Anthropic. `overrail run` points Claude Code straight at DeepSeek's Anthropic-compatible endpoint — it's provider switching, and it does not go through the gateway. For automatic failover and mid-stream stitching, use the gateway below with tools that speak OpenAI's API (aider, Codex, curl).
 
-*If Windows says `overrail` is not recognized, run commands as `npx github:9qe/overrail <command>` instead.*
+*If Windows says `overrail` is not recognized, run `npm i -g overrail` once, or prefix commands with `npx overrail`.*
 
 ---
 
@@ -75,7 +75,7 @@ That's Claude Code running on DeepSeek instead of Anthropic. `overrail run` poin
 
 **Kill an LLM provider mid-sentence. Your agent keeps streaming.**
 
-Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first. Not on npm yet — install straight from GitHub.
+Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first. Install: `npm i -g overrail` or `npx overrail init`.
 
 ### Why not LiteLLM, OpenRouter, or another proxy
 

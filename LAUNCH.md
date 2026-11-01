@@ -14,7 +14,7 @@ Post body:
 
 overrail is a zero-dependency Node.js CLI (MIT, Windows-first, Node >= 18) that does two things. First, env injection: `overrail run deepseek -- claude` launches Claude Code pointed at DeepSeek using your own DEEPSEEK_API_KEY — no config surgery, no exporting env vars by hand. Second, a local gateway: `overrail serve` starts an OpenAI-compatible endpoint at http://127.0.0.1:8787 (POST /v1/chat/completions, GET /v1/models). If a provider returns 429, 500, 502, 503, or 504, or the connection drops, the gateway fails over down the chain: deepseek -> kimi -> openrouter -> ollama. Gateway requests are logged to ~/.overrail/usage.jsonl, viewable with `overrail usage`.
 
-Built because agent CLIs are wired to one vendor, and switching mid-task means env-var archaeology and lost work. A rate limit should not end a coding session. Honest about v0.1.0 scope: env injection, the gateway, failover chains, and the usage log all work today. No tray app yet, no cost estimates, no smart routing — that is the roadmap. Not on npm yet, so install is `npx github:9qe/overrail init`. Keys never leave your machine, there is no telemetry, and the gateway binds to 127.0.0.1 only.
+Built because agent CLIs are wired to one vendor, and switching mid-task means env-var archaeology and lost work. A rate limit should not end a coding session. Honest about v0.1.0 scope: env injection, the gateway, failover chains, and the usage log all work today. No tray app yet, no cost estimates, no smart routing — that is the roadmap. Install: `npx overrail init`. Keys never leave your machine, there is no telemetry, and the gateway binds to 127.0.0.1 only.
 
 Etiquette:
 
@@ -38,7 +38,7 @@ What it is: a zero-dependency Node.js CLI, MIT, Windows-first. `overrail serve` 
 
 Privacy: the gateway binds 127.0.0.1 only, there is no telemetry, and with the ollama profile requests never leave your machine. Hosted-profile keys stay on your machine too.
 
-Honest scope: v0.1.0 — CLI, gateway, failover, usage log. No tray app yet. Not on npm: `npx github:9qe/overrail init`. Repo: https://github.com/9qe/overrail
+Honest scope: v0.1.0 — CLI, gateway, failover, usage log. No tray app yet. Install: `npx overrail init`. Repo: https://github.com/9qe/overrail
 
 ## X / Twitter thread
 
@@ -68,13 +68,13 @@ Requests are logged to ~/.overrail/usage.jsonl. Run overrail usage to see the ta
 
 Keys never leave your machine. No telemetry. Nothing runs in the background.
 
-v0.1.0 — try it: npx github:9qe/overrail init
+v0.1.0 — try it: npx overrail init
 
 ## GIF to record
 
 One GIF, six shots, in this order:
 
-- [ ] `npx github:9qe/overrail init` — show setup completing
+- [ ] `npx overrail init` — show setup completing
 - [ ] env: set `DEEPSEEK_API_KEY`, then run `overrail env deepseek` to show what gets injected
 - [ ] `overrail run deepseek -- claude` — Claude Code starts pointed at DeepSeek
 - [ ] Type a prompt; show Claude answering on DeepSeek

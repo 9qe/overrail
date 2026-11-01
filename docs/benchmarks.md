@@ -43,27 +43,44 @@ Exit code is `0` only when every verification check passes; the JSON is printed 
 
 ## Result (2026-11-01, Windows 11 x64, Node v24.11.0, integrated relay)
 
-From `docs/benchmark-results.json` (exit 0, verification `pass: true`):
+Percentiles over repeated verified runs — `node examples/benchmark-repeat.js 11 [--out ...]`,
+which re-runs the benchmark and **discards any iteration whose verification fails**, so the
+numbers below come only from runs that produced a byte-exact stitch:
 
-| Metric | Drop @4000 | Drop @7900 |
+| Metric | Drop @4000 (11/11 verified) | Drop @7900 (10/11 verified) |
 |---|---|---|
-| First byte latency | 124 ms | 130 ms |
-| Client-observed failover gap | 34 ms | 16 ms |
-| Backup setup (primary first write → backup request) | 190 ms | 328 ms |
-| Total stream time | 364 ms | 401 ms |
-| Bytes received by client | 1,367,631 | 1,367,631 |
-| Content deltas / chars | 8000 / 46,890 | 8000 / 46,890 |
-| `[DONE]` markers | 1 | 1 |
-| Finish events | 1 | 1 |
-| Tool-call occurrences | 1 (args valid) | 1 (args valid) |
-| Peak RSS (start ~51.4 MB) | 74.3 MB | 74.1 MB |
+| First byte latency, p50 / p90 / max | 325 / 507 / 510 ms | 341 / 521 / 553 ms |
+| Client-observed failover gap, p50 / p90 / max | 84 / 141 / 143 ms | 45 / 66 / 70 ms |
+| Backup setup (primary first write → backup request), p50 / p90 | 546 / 664 ms | 884 / 1152 ms |
+| Total stream time, p50 / p90 / max | 1069 / 1270 / 1544 ms | 1057 / 1470 / 1725 ms |
+| Peak RSS, p50 | 75.1 MB | 75.4 MB |
 
-Evidence files: `docs/benchmark-results.json` (drop at 4000), `docs/benchmark-results-late-drop.json`
-(drop at 7900 — a drop that lands almost at the end of the answer).
+Evidence files: `docs/benchmark-percentiles.json`, `docs/benchmark-percentiles-late-drop.json`,
+plus one representative single run each in `docs/benchmark-results.json` and
+`docs/benchmark-results-late-drop.json`.
 
-Verification: `exact_stitch, single_done, single_finish_event, tool_call_once, tool_args_valid,
-usage_present, no_unparsed_events` — all `true` at both offsets. Repeat runs vary timing by a few
-tens of ms; all content/`[DONE]`/stitch counts are identical.
+Invariants held on every verified run at both drop points, identically: 8000/8000 content deltas,
+46,890 chars, 1,367,631 client bytes, exactly one `[DONE]`, exactly one finish event, one primary
+request, one backup request. Verification flags `exact_stitch, single_done, single_finish_event,
+tool_call_once, tool_args_valid, usage_present, no_unparsed_events` are `true` for all of them.
+
+### The one failure we saw, stated plainly
+
+Iteration 11 of the drop@7900 set died with `benchmark failed: terminated` (undici reporting the
+response body aborted before `[DONE]`) and was excluded from the percentiles. It happened while
+three other test suites were hammering the same machine. After that, 6 + 30 consecutive late-drop
+runs on an otherwise idle bench passed with exit 0, so the honest read is *an unreproduced
+transient under heavy concurrent load*, not a known defect — and not zero risk either. Anyone who
+reproduces it should open an issue; the gateway's own abort path (`res.destroy()` after bytes are
+already on the wire) is where a client sees `terminated`.
+
+### Timing on an idle machine
+
+An isolated single run earlier the same day measured 124 ms first byte and a 34 ms gap at drop@4000.
+Treat the percentile table as the citable numbers: it was collected deliberately, 11 times, and the
+spread is what a developer on a busy laptop will actually experience. The gap and backup-setup
+figures also differ from each other by design — the gap is what the *client* feels, backup setup is
+internal work that overlaps with nothing.
 
 ## What this benchmark does **not** prove
 

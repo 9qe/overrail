@@ -80,6 +80,46 @@ function phase_lines(recovery_id, phase, tool_call_id) {
   );
 }
 
+// The observable current state a consumer reads. `phases` is deliberately excluded:
+// compaction collapses generated/offered/acknowledged/abandoned into the terminal
+// record(s), so the phase histogram shrinks by design while status/delivered/conflict
+// and the final function/args must survive untouched.
+function projection(state) {
+  const calls = {};
+  for (const tool_call_id of state.order) {
+    const call = state.calls[tool_call_id];
+    calls[tool_call_id] = {
+      tool_call_id: call.tool_call_id,
+      function: call.function,
+      args_sha256: call.args_sha256,
+      status: call.status,
+      delivered: call.delivered,
+      conflict: call.conflict,
+    };
+  }
+  return {
+    exists: state.exists,
+    request_hash: state.request_hash,
+    profile: state.profile,
+    provider: state.provider,
+    model: state.model,
+    source: state.source,
+    created_ts: state.created_ts,
+    order: state.order,
+    calls,
+  };
+}
+
+function with_recovery_dir(name, body) {
+  const dir = path.join(tmp_dir, name);
+  process.env.OVERRAIL_RECOVERY_DIR = dir;
+  try {
+    return body(dir);
+  } finally {
+    delete process.env.OVERRAIL_RECOVERY_DIR;
+  }
+}
+
 test("the recovery key is stable for the same normalized request", () => {
   const first = recovery.derive_recovery_key(base_request());
   const second = recovery.derive_recovery_key(base_request());
@@ -561,4 +601,275 @@ test("POST /v1/recovery/:id/ack acks, replays and rejects without throwing", asy
   assert.equal(recovery.match_recovery_ack("/v1/recovery/abc/ack/").recovery_id, "abc");
   assert.equal(recovery.match_recovery_ack("/v1/chat/completions"), null);
   assert.equal(recovery.match_recovery_ack("/v1/recovery/abc"), null);
+});
+
+test("open_session reports a conflict when params.temperature differs under one key", () => {
+  const headers = { "idempotency-key": "params-temp-conflict" };
+  const first = recovery.open_session({ ...base_request(), params: { temperature: 0.1, max_tokens: 1000 }, headers });
+  assert.equal(first.ok, true);
+  assert.equal(first.created, true);
+  const second = recovery.open_session({ ...base_request(), params: { temperature: 1.0, max_tokens: 1000 }, headers });
+  assert.equal(second.ok, false);
+  assert.equal(second.code, "idempotency_key_conflict");
+  assert.equal(second.recovery_id, first.recovery_id); // same caller key -> same session id
+  assert.equal(second.existing_request_hash, first.request_hash);
+  assert.equal(second.request_hash === first.request_hash, false);
+  assert.equal(second.created, false);
+  assert.equal(second.state, null);
+  // conflict surfaces at request time: no second "created" line landed
+  assert.equal(phase_lines(first.recovery_id, "created").length, 1);
+});
+
+test("open_session reports a conflict when any folded generation parameter differs under one key", () => {
+  const variants = [
+    ["max_tokens", { max_tokens: 512 }, { max_tokens: 4096 }],
+    ["top_p", { top_p: 0.2 }, { top_p: 0.9 }],
+    ["presence_penalty", { presence_penalty: 0 }, { presence_penalty: 1.5 }],
+    ["frequency_penalty", { frequency_penalty: 0.1 }, { frequency_penalty: 0.7 }],
+    ["min_p", { min_p: 0.05 }, { min_p: 0.4 }],
+    ["tool_choice", { tool_choice: "auto" }, { tool_choice: "none" }],
+    ["stop", { stop: ["END"] }, { stop: ["STOP"] }],
+    ["response_format", { response_format: { type: "text" } }, { response_format: { type: "json_object" } }],
+    ["seed", { seed: 7 }, { seed: 42 }],
+    ["stream", { stream: false }, { stream: true }],
+    ["parallel_tool_calls", { parallel_tool_calls: true }, { parallel_tool_calls: false }],
+    ["top_k", { top_k: 40 }, { top_k: 100 }],
+    ["logprobs", { logprobs: false }, { logprobs: true }],
+  ];
+  for (const [name, a, b] of variants) {
+    const headers = { "idempotency-key": `params-conflict-${name}` };
+    const first = recovery.open_session({ ...base_request(), params: a, headers });
+    assert.equal(first.ok, true, name);
+    const second = recovery.open_session({ ...base_request(), params: b, headers });
+    assert.equal(second.ok, false, name);
+    assert.equal(second.code, "idempotency_key_conflict", name);
+    assert.equal(second.recovery_id, first.recovery_id, name);
+    assert.equal(second.existing_request_hash, first.request_hash, name);
+    // a matching re-open (same value, different key ORDER) is accepted
+    const reshuffled = recovery.open_session({
+      ...base_request(),
+      params: { ...b, _marker: Object.keys(b).length },
+      headers,
+    });
+    assert.equal(reshuffled.ok, false, name); // adding a new param still changes the identity
+  }
+});
+
+test("identical params in a different key order open the same session without a conflict", () => {
+  const headers = { "idempotency-key": "params-order-stable" };
+  const first = recovery.open_session({
+    ...base_request(),
+    params: { temperature: 0.5, max_tokens: 2000, stop: ["A", "B"], response_format: { type: "json_object" } },
+    headers,
+  });
+  const second = recovery.open_session({
+    ...base_request(),
+    params: { response_format: { type: "json_object" }, stop: ["A", "B"], max_tokens: 2000, temperature: 0.5 },
+    headers,
+  });
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.created, false);
+  assert.equal(second.recovery_id, first.recovery_id);
+  assert.equal(second.request_hash, first.request_hash); // order-independent, stable digest
+  // stop is an array: reordering the ARRAY (not just object keys) is a different request
+  const reordered_stop = recovery.open_session({ ...base_request(), params: { stop: ["B", "A"] }, headers });
+  assert.equal(reordered_stop.ok, false);
+  assert.equal(reordered_stop.code, "idempotency_key_conflict");
+});
+
+test("derived identities separate requests that differ only by params", () => {
+  const low = recovery.open_session({ ...base_request(), params: { temperature: 0.1 } });
+  assert.equal(low.ok, true);
+  assert.equal(low.source, "derived");
+  const high = recovery.open_session({ ...base_request(), params: { temperature: 1.0 } });
+  assert.equal(high.ok, true);
+  assert.equal(high.source, "derived");
+  assert.notEqual(high.recovery_id, low.recovery_id); // different bodies -> different ids, no collision
+  assert.equal(recovery.load_state(low.recovery_id).request_hash, low.request_hash);
+  assert.equal(recovery.load_state(high.recovery_id).request_hash, high.request_hash);
+  // re-opening either with the same params is idempotent (derived ids never conflict)
+  assert.equal(recovery.open_session({ ...base_request(), params: { temperature: 0.1 } }).created, false);
+  assert.equal(recovery.open_session({ ...base_request(), params: { temperature: 1.0 } }).ok, true);
+});
+
+test("generation parameters fold into the digest but are never written to the journal", () => {
+  with_recovery_dir("params-privacy", () => {
+    const headers = { "idempotency-key": "params-privacy" };
+    const opened = recovery.open_session({
+      ...base_request(),
+      messages: [{ role: "user", content: "PARAM SECRET PROMPT read it back" }],
+      params: {
+        temperature: 0.731,
+        max_tokens: 48111,
+        stop: ["ZZSECRETTOKZZ"],
+        response_format: { type: "json_object", marker: "PARAM_SECRET_MARKER" },
+        seed: 918273,
+      },
+      headers,
+    });
+    recovery.record_tool_call({
+      recovery_id: opened.recovery_id,
+      tool_call_id: "call_p",
+      name: "write",
+      arguments: '{"path":"/etc/PARAM_SECRET_ARGS"}',
+      phase: "offered",
+    });
+
+    const raw = fs.readFileSync(recovery.journal_path(), "utf8");
+    for (const banned of [
+      "ZZSECRETTOKZZ",
+      "PARAM_SECRET_MARKER",
+      "PARAM SECRET PROMPT",
+      "PARAM_SECRET_ARGS",
+      "read it back",
+      "json_object",
+    ]) {
+      assert.equal(raw.includes(banned), false, banned);
+    }
+    // the values still influence the identity: dropping params changes the digest
+    const no_params = recovery.derive_recovery_key({ ...base_request(), headers });
+    assert.notEqual(no_params.request_hash, opened.request_hash);
+    // different numeric params under one key -> different digest (folded, not allowlisted)
+    const other_temp = recovery.derive_recovery_key({
+      ...base_request(),
+      params: { temperature: 0.732, max_tokens: 48111, stop: ["ZZSECRETTOKZZ"], response_format: { type: "json_object", marker: "PARAM_SECRET_MARKER" }, seed: 918273 },
+      headers,
+    });
+    assert.notEqual(other_temp.request_hash, opened.request_hash);
+    // every persisted line stays allowlisted metadata only
+    for (const entry of recovery.read_journal(0)) {
+      for (const key of Object.keys(entry)) assert.ok(JOURNAL_FIELDS.has(key), `unexpected field ${key}`);
+    }
+  });
+});
+
+test("compact_journal collapses transitions and preserves load_state", () => {
+  with_recovery_dir("compact-basic", () => {
+    const headers = { "idempotency-key": "compact-1" };
+    const opened = recovery.open_session({ ...base_request(), headers });
+    const id = opened.recovery_id;
+
+    // call_ack: generated -> offered -> offered -> acknowledged (delivered, terminal ack)
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_ack", name: "read", arguments: '{"p":"1"}', phase: "generated" });
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_ack", name: "read", arguments: '{"p":"2"}', phase: "offered" });
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_ack", name: "read", arguments: '{"p":"3"}', phase: "offered" });
+    recovery.acknowledge_execution({ recovery_id: id, tool_call_id: "call_ack" });
+    // call_ad: offered -> abandoned (delivered AND abandoned)
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_ad", name: "write", arguments: "{}", phase: "offered" });
+    recovery.abandon_call({ recovery_id: id, tool_call_id: "call_ad" });
+    // call_gen: generated only (never delivered -> must_regenerate)
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_gen", name: "mail", arguments: '{"to":"x"}', phase: "generated" });
+    // call_ab: generated -> abandoned (abandoned, never delivered)
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_ab", name: "post", arguments: "{}", phase: "generated" });
+    recovery.abandon_call({ recovery_id: id, tool_call_id: "call_ab" });
+    // call_conflict: offered -> acknowledged -> abandoned (ack wins, conflict flag)
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_conflict", name: "write", arguments: "{}", phase: "offered" });
+    recovery.acknowledge_execution({ recovery_id: id, tool_call_id: "call_conflict" });
+    fs.appendFileSync(
+      recovery.journal_path(),
+      `${JSON.stringify({ v: 1, ts: new Date().toISOString(), recovery_id: id, tool_call_id: "call_conflict", phase: "abandoned" })}\n`
+    );
+
+    const before = projection(recovery.load_state(id));
+    const before_history = recovery.continuation_history(id);
+    const before_lines = recovery.read_journal(0).length;
+    assert.ok(before_lines > 8, `expected >8 lines, got ${before_lines}`);
+
+    const result = recovery.compact_journal();
+    assert.equal(result.ok, true);
+    assert.equal(result.before, before_lines);
+    assert.equal(result.removed > 0, true);
+
+    assert.deepEqual(projection(recovery.load_state(id)), before);
+    assert.deepEqual(recovery.continuation_history(id), before_history);
+    assert.equal(recovery.is_executed(id, "call_ack"), true);
+    assert.equal(recovery.load_state(id).calls.call_conflict.status, "acknowledged");
+    assert.equal(recovery.load_state(id).calls.call_conflict.conflict, "acknowledged_wins_over_abandon");
+    assert.equal(recovery.load_state(id).calls.call_ad.delivered, true);
+    assert.equal(recovery.load_state(id).calls.call_gen.delivered, false);
+    assert.equal(recovery.load_state(id).calls.call_ab.status, "abandoned");
+
+    // idempotent: a second pass removes nothing and changes nothing
+    const second = recovery.compact_journal();
+    assert.equal(second.ok, true);
+    assert.equal(second.removed, 0);
+    assert.equal(second.before, result.after);
+    assert.equal(recovery.read_journal(0).length, result.after);
+    assert.deepEqual(projection(recovery.load_state(id)), before);
+  });
+});
+
+test("auto-compaction keeps the journal at or under the configured size bound", () => {
+  const dir = path.join(tmp_dir, "compact-bound");
+  process.env.OVERRAIL_RECOVERY_DIR = dir;
+  process.env.OVERRAIL_RECOVERY_MAX_BYTES = "2048";
+  try {
+    const headers = { "idempotency-key": "bound-1" };
+    const opened = recovery.open_session({ ...base_request(), headers });
+    const id = opened.recovery_id;
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_done", name: "write", arguments: "{}", phase: "offered" });
+    recovery.acknowledge_execution({ recovery_id: id, tool_call_id: "call_done" });
+    // A single hot call re-emitted with fresh arguments produces the redundant
+    // transitions compaction collapses; enough of them to blow past the 2048 bound.
+    for (let i = 0; i < 60; i++) {
+      recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_churn", name: "ping", arguments: `{"i":${i}}`, phase: "offered" });
+    }
+    // 60 appends at ~130 bytes each vastly exceeds 2048, so the only way the file is
+    // at-or-under the bound is that the append path auto-compacted it.
+    assert.ok(fs.statSync(recovery.journal_path()).size <= 2048);
+    const state = recovery.load_state(id);
+    // terminal states survive: the acked call executed, the churn call is still present
+    assert.equal(state.calls.call_done.status, "acknowledged");
+    assert.equal(recovery.is_executed(id, "call_done"), true);
+    assert.equal(state.calls.call_churn.status, "offered");
+    assert.equal(state.calls.call_churn.delivered, true);
+    assert.equal(state.calls.call_churn.args_sha256, recovery.hash_arguments('{"i":59}')); // final args kept
+    assert.equal(state.order.length, 2); // no call was pruned, only transitions collapsed
+  } finally {
+    delete process.env.OVERRAIL_RECOVERY_MAX_BYTES;
+    delete process.env.OVERRAIL_RECOVERY_DIR;
+  }
+});
+
+test("stale compaction locks are stolen; fresh locks are respected", () => {
+  with_recovery_dir("compact-lock", () => {
+    const headers = { "idempotency-key": "lock-1" };
+    const opened = recovery.open_session({ ...base_request(), headers });
+    const id = opened.recovery_id;
+    // three transitions on one call: first(generated) + last(acknowledged) survive, the
+    // middle offered collapses away, so compaction has something to remove.
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_l", name: "write", arguments: '{"n":1}', phase: "generated" });
+    recovery.record_tool_call({ recovery_id: id, tool_call_id: "call_l", name: "write", arguments: '{"n":2}', phase: "offered" });
+    recovery.acknowledge_execution({ recovery_id: id, tool_call_id: "call_l" });
+    const before_lines = recovery.read_journal(0).length;
+    assert.equal(before_lines, 4); // created + generated + offered + acknowledged
+
+    // a crashed process left a lock behind (old mtime) -> compaction steals it and proceeds
+    const lock = recovery.journal_lock_path();
+    fs.writeFileSync(lock, "999999");
+    const old = new Date(Date.now() - 10000);
+    fs.utimesSync(lock, old, old);
+    const stolen = recovery.compact_journal();
+    assert.equal(stolen.ok, true);
+    assert.equal(stolen.removed, 1); // the middle offered collapsed
+    assert.equal(fs.existsSync(lock), false); // the winner released it
+    const after_stolen = recovery.read_journal(0).length;
+    assert.equal(after_stolen, 3);
+    const state = recovery.load_state(id);
+    assert.equal(state.calls.call_l.status, "acknowledged");
+    assert.equal(state.calls.call_l.delivered, true);
+    assert.equal(recovery.is_executed(id, "call_l"), true);
+
+    // a live process holds a fresh lock -> compaction is skipped, the journal is untouched
+    fs.writeFileSync(lock, String(process.pid));
+    const now = new Date();
+    fs.utimesSync(lock, now, now);
+    const skipped = recovery.compact_journal();
+    assert.equal(skipped.ok, false);
+    assert.equal(skipped.code, "compact_lock_busy");
+    assert.equal(fs.existsSync(lock), true); // the foreign lock is left in place
+    assert.equal(recovery.read_journal(0).length, after_stolen); // nothing rewritten while locked
+    fs.unlinkSync(lock); // clean up the simulated foreign lock
+  });
 });

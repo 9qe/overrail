@@ -1,0 +1,74 @@
+{
+  "kind": "overrail-recovery-benchmark-repeat",
+  "generated_at": "2026-11-01T13:15:45.071Z",
+  "node": "v24.11.0",
+  "platform": "win32 x64",
+  "runs_attempted": 11,
+  "runs_verified": 10,
+  "run_failures": [
+    {
+      "iteration": 11,
+      "reason": "no report emitted",
+      "stderr": "benchmark failed: terminated\n"
+    }
+  ],
+  "env": {
+    "OVERRAIL_BENCH_TOTAL": null,
+    "OVERRAIL_BENCH_DROP_AT": "7900"
+  },
+  "stats": {
+    "first_byte_latency_ms": {
+      "n": 10,
+      "min": 259,
+      "p50": 341,
+      "p90": 521,
+      "max": 553
+    },
+    "failover_gap_ms": {
+      "n": 10,
+      "min": 28,
+      "p50": 45,
+      "p90": 66,
+      "max": 70
+    },
+    "backup_setup_ms": {
+      "n": 10,
+      "min": 668,
+      "p50": 884,
+      "p90": 1152,
+      "max": 1391
+    },
+    "total_ms": {
+      "n": 10,
+      "min": 828,
+      "p50": 1057,
+      "p90": 1470,
+      "max": 1725
+    },
+    "raw_bytes_client_received": {
+      "n": 10,
+      "min": 1367631,
+      "p50": 1367631,
+      "p90": 1367631,
+      "max": 1367631
+    },
+    "peak_rss_mb": {
+      "n": 10,
+      "min": 73.7,
+      "p50": 75.4,
+      "p90": 75.8,
+      "max": 75.9
+    }
+  },
+  "invariants": {
+    "total_deltas": 8000,
+    "drop_at": 7900,
+    "content_deltas": 8000,
+    "content_chars": 46890,
+    "done_markers": 1,
+    "finish_events": 1,
+    "primary_requests": 1,
+    "backup_requests": 1
+  },
+  "interpretation": "client-observed timings on localhost mock upstreams in one process; a real backup provider over the internet is a different measurement"
+}

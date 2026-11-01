@@ -93,7 +93,7 @@ Because arguments are not persisted, a continuation built from disk cannot quote
 
 The relay still holds the real arguments in memory during a stitch; pass them through `known_arguments` and the sentinel is not used.
 
-Durability limits, stated plainly: writes are single small `appendFileSync` lines (no `fsync`, no directory sync, no file locking). A power loss can lose or tear the tail line; `read_journal()` skips unparseable lines the same way `readUsage()` does, so a torn tail costs one record, not the session. There is no rotation or compaction — trim the file yourself if it grows.
+Durability limits, stated plainly: writes are single small `appendFileSync` lines — no `fsync`, no directory sync. A power loss can lose or tear the tail line; `read_journal()` skips unparseable lines the same way `readUsage()` does, so a torn tail costs one record, not the session. Growth is bounded: when the file passes `OVERRAIL_RECOVERY_MAX_BYTES` (default 8 MiB) the next append compacts it, collapsing each `(recovery_id, tool_call_id)` group to the records needed to reconstruct current state, writing to a temp file in the same directory and `renameSync`-ing over the original so an interrupted compaction cannot truncate the journal. Compaction takes an exclusive lock file (`recovery.jsonl.lock`) and steals a lock older than 5 seconds so a crashed process cannot wedge it; a fresh foreign lock makes compaction skip rather than risk a torn rewrite. Appends stay a single write and are not locked. What this still does not give you: crash-proof durability of the last line, cross-machine replication, or encryption at rest — the home directory is the trust boundary.
 
 ## 6. Recovery identity
 
@@ -101,11 +101,15 @@ Durability limits, stated plainly: writes are single small `appendFileSync` line
 
 1. If an `Idempotency-Key` or `OVERRAIL-RECOVERY-KEY` header is present and non-blank (case-insensitive; `Idempotency-Key` wins), `recovery_id = sha256("overrail-recovery-key:v1\n" + value)` and `source: "header"`.
 2. Otherwise `recovery_id = request_hash` and `source: "derived"`, where
-   `request_hash = sha256("overrail-request:v1\n" + canonical(normalised request))`.
+   `request_hash = sha256("overrail-request:v2\n" + canonical(normalised request))`.
 
-Normalisation is the identity: endpoint (query and trailing slashes stripped), profile name, model, messages, tool definitions, tool-result context. Object keys sorted, `null` treated as absent, tool `arguments` canonicalised through a JSON round trip, tool-call `index` dropped (stream framing, array order carries position), tool **order kept** (it is model-visible), unrecognised message/body fields ignored — so `temperature`, `stream`, per-attempt request ids, and header noise never change the identity, and a client that re-serialises the same logical request gets the same id.
+The v2 identity covers everything that changes what the model generates, not just the conversation: `endpoint`, `profile`, `model`, `messages`, `tools`, tool results, **and `params`** — the request body minus `messages`/`tools`, so `temperature`, `max_tokens`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `frequency_penalty`, `seed`, `stop`, `response_format`, `stream`, `stream_options`, `tool_choice` and `parallel_tool_calls` all take part. Key order does not matter (`canonical_json` sorts); array order does, so a reordered `stop` list is a different request. Parameter *values* feed the digest only — the metadata allowlist keeps them out of the journal file, and a test asserts the bytes on disk contain none of them.
 
-The identity is deliberately not a fingerprint of everything: it is a fingerprint of the things whose difference would change what the tools should do.
+Normalisation of the conversation: endpoint (query and trailing slashes stripped), profile name, model, messages, tool definitions, tool-result context. Object keys sorted, `null` treated as absent, tool `arguments` canonicalised through a JSON round trip, tool-call `index` dropped (stream framing, array order carries position), tool **order kept** (it is model-visible). Generation and response parameters travel with it as `params` (see above).
+
+The identity is a fingerprint of the things whose difference would change what the tools should do — and of everything that changes what the model emits. That is a reversal from the first draft of this document, which excluded `temperature` and friends on the theory that they were not semantic. In practice a client that reuses one idempotency key for `temperature: 0.1, max_tokens: 1000` and then for `temperature: 1.0, max_tokens: 8000` is asking two different questions of the same key, and a journal that cannot tell them apart is worse than no journal.
+
+A conflict is detected **at request time**: `open_session()` loads existing state for a header-supplied key *before* it appends anything, and on a `request_hash` mismatch returns `{ ok: false, code: "idempotency_key_conflict", recovery_id, existing_request_hash, request_hash, source: "header", created: false, state: null }`. The gateway turns that into **409** in the caller's dialect, naming both hashes. `record_emitted_calls()` keeps the same check as a backstop for sessions created before this existed. Requests with no caller key take the other branch: identity *is* the digest, so two different bodies can never collide and there is nothing to conflict about.
 
 ## 7. Ack protocol
 
@@ -157,7 +161,7 @@ The backup is a different model with different conditioning. Expect, and do not 
 
 A provider failure after delivery can leave an execution result permanently unavailable. The protocol exposes that as `execution_unknown` with no inferred replacement value. Stitching the *text* is not stitching the *effect*, and this module never presents them as the same thing.
 
-## 10. Gateway wiring (not yet applied)
+## 10. Gateway wiring (applied)
 
 `lib/recovery.js` is standalone; nothing imports it yet. Two edits make it live.
 
@@ -226,8 +230,8 @@ The stitching path in `relay_stream` (`attempt_chain(parsed_body, history)`) sho
 node --test test/recovery.test.js
 ```
 
-Covers: key stability, normalisation (key order, whitespace, `null` vs absent, `index` dropped, tool order significant, non-semantic fields ignored), header precedence, argument-hash equivalence, journal location, metadata-only persistence (asserts secret prompt/argument tokens are absent from disk and every field is allowlisted), session idempotency and `idempotency_key_conflict`, phase dedupe, idempotent ack with exactly one execution record, unknown-id and malformed-input refusals without exceptions, abandon/ack races including a hand-injected conflicting journal line, torn-line tolerance, `OVERRAIL_RECOVERY_DIR`, continuation grouping plus the arguments sentinel and live-argument override, and the HTTP contract end to end through a server wired exactly as §10 describes.
+Covers: key stability, normalisation (key order, whitespace, `null` vs absent, `index` dropped, tool order significant), generation parameters inside the identity (a conflict is raised for each of `max_tokens`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `frequency_penalty`, `tool_choice`, `stop`, `response_format`, `seed`, `stream`, `parallel_tool_calls`, `logprobs`; reordered scalar keys are not a conflict, a reordered `stop` array is), v2 hash prefix, header precedence, argument-hash equivalence, journal location, metadata-only persistence (asserts secret prompt/argument/**parameter** tokens are absent from disk and every field is allowlisted), request-time `idempotency_key_conflict` from `open_session`, phase dedupe, idempotent ack with exactly one execution record, unknown-id and malformed-input refusals without exceptions, abandon/ack races including a hand-injected conflicting journal line, torn-line tolerance, `OVERRAIL_RECOVERY_DIR`, size-bounded compaction (state survives it, compaction is idempotent), stale-lock takeover and busy-lock refusal, continuation grouping plus the arguments sentinel and live-argument override, and the HTTP contract end to end through a server wired exactly as §10 describes.
 
 ## 12. Non-goals
 
-No network replication, no cross-machine journal, no fsync-backed durability claim, no encrypted at-rest store (the file is metadata, but the home directory is the trust boundary), no automatic retry of tools, no provider-side transaction, and no claim of exactly-once execution anywhere in this document.
+No network replication, no cross-machine journal, no fsync-backed durability claim, no encrypted at-rest store (the file is metadata, but the home directory is the trust boundary), no automatic retry of tools, no provider-side transaction, no multi-writer journal (the compaction lock keeps rewrite from tearing; concurrent processes still each append their own lines), and no claim of exactly-once execution anywhere in this document.

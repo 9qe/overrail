@@ -180,3 +180,90 @@ test("POST /v1/messages streams a buffered tool call as Anthropic tool_use", asy
   assert.equal(json, '{"q":"x"}');
   assert.equal(events.find((event) => event.data.type === "message_delta").data.delta.stop_reason, "tool_use");
 });
+
+test("POST /v1/messages rejects an oversized body with 413 and an Anthropic-shaped error", { timeout: 10000 }, async () => {
+  let upstream_hits = 0;
+  const upstream = await listen(
+    http.createServer(async (req, res) => {
+      upstream_hits += 1;
+      await collect_body(req);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    })
+  );
+  created.push(upstream);
+  const url = await gateway_for(upstream, null);
+  process.env.OVERRAIL_MAX_BODY_BYTES = "256";
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "deepseek",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "x".repeat(4096) }],
+      }),
+    });
+    assert.equal(res.status, 413);
+    const body = await res.json();
+    assert.deepEqual(body, {
+      type: "error",
+      error: {
+        type: "request_too_large",
+        message: "request body exceeds the 256-byte limit (raise with OVERRAIL_MAX_BODY_BYTES)",
+      },
+    });
+    assert.equal(upstream_hits, 0);
+  } finally {
+    delete process.env.OVERRAIL_MAX_BODY_BYTES;
+  }
+});
+
+test("POST /v1/messages answers a reused idempotency key with 409 naming both hashes", { timeout: 10000 }, async () => {
+  let upstream_hits = 0;
+  const upstream = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      upstream_hits += 1;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "chatcmpl-anthropic-conflict",
+          model: "deepseek-chat",
+          choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 2, completion_tokens: 1 },
+        })
+      );
+    })
+  );
+  created.push(upstream);
+  const url = await gateway_for(upstream, null);
+  const headers = { "content-type": "application/json", "idempotency-key": "anthropic-gateway-conflict-key" };
+  const post = (content) =>
+    fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "deepseek", max_tokens: 8, messages: [{ role: "user", content }] }),
+    });
+
+  const first = await post("first leg");
+  assert.equal(first.status, 200);
+  const recovery_id = first.headers.get("x-overrail-recovery-id");
+  assert.match(recovery_id, /^[a-f0-9]{64}$/);
+
+  const second = await post("second leg");
+  assert.equal(second.status, 409);
+  const body = await second.json();
+  assert.equal(body.type, "error");
+  assert.equal(body.error.type, "invalid_request_error");
+  assert.equal(body.error.code, "idempotency_key_conflict");
+  assert.equal(body.error.recovery_id, recovery_id);
+  assert.match(body.error.existing_request_hash, /^[a-f0-9]{64}$/);
+  assert.match(body.error.request_hash, /^[a-f0-9]{64}$/);
+  assert.notEqual(body.error.existing_request_hash, body.error.request_hash);
+  assert.ok(body.error.message.includes(recovery_id));
+  assert.ok(body.error.message.includes(body.error.existing_request_hash));
+  assert.ok(body.error.message.includes(body.error.request_hash));
+  assert.equal(upstream_hits, 1);
+});
+

@@ -1,6 +1,6 @@
 {
   "kind": "overrail-provider-matrix",
-  "generated_at": "2026-11-01T05:27:48.593Z",
+  "generated_at": "2026-11-01T13:11:42.895Z",
   "node": "v24.11.0",
   "opt_in_rate_limit": false,
   "providers_present": [
@@ -222,7 +222,7 @@
           "status": "SKIP-UNREACHABLE",
           "classification": "network-unreachable (gateway-wrapped)",
           "detail": "{\"error\":{\"message\":\"all providers failed\",\"details\":[{\"profile\":\"ollama\",\"error\":\"ollama: fetch failed (ECONNREFUSED)\"}]}}",
-          "latency_ms": 36
+          "latency_ms": 82
         },
         {
           "case": "stream",

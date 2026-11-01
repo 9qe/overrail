@@ -122,6 +122,41 @@ function assembled_text(chunks) {
   return out;
 }
 
+// Client-side assembly of tool-call deltas, the way a real streaming client
+// stitches them: index-keyed accumulation of id/name/argument fragments.
+function assembled_tool_calls(chunks) {
+  const by_index = new Map();
+  for (const c of chunks) {
+    const choice = Array.isArray(c.choices) ? c.choices[0] : null;
+    const calls = choice && choice.delta && choice.delta.tool_calls;
+    if (!Array.isArray(calls)) continue;
+    for (const d of calls) {
+      const key = typeof d.index === "number" ? d.index : 0;
+      if (!by_index.has(key)) by_index.set(key, { id: null, name: null, arguments: "" });
+      const acc = by_index.get(key);
+      if (d.id) acc.id = d.id;
+      if (d.function) {
+        if (d.function.name) acc.name = d.function.name;
+        if (typeof d.function.arguments === "string") acc.arguments += d.function.arguments;
+      }
+    }
+  }
+  return [...by_index.values()];
+}
+
+// No frame the client receives may carry two of these fields at once: content
+// with unvalidated tool args leaks partial calls, and a raw finish_reason
+// alongside the synthesized final chunk means a double finish.
+function frames_carrying_both(chunks, fields) {
+  return chunks.filter((c) => {
+    const choice = Array.isArray(c.choices) ? c.choices[0] : null;
+    if (!choice) return false;
+    const delta = choice.delta || {};
+    const present = (f) => choice[f] !== undefined || delta[f] !== undefined;
+    return fields.every(present);
+  });
+}
+
 function usage_lines() {
   try {
     return fs
@@ -582,4 +617,233 @@ test("usage merged across both legs; usage log carries backup provider evidence"
   assert.equal(entries[0].model, "kimi-k2");
   assert.equal(entries[0].prompt_tokens, 150);
   assert.equal(entries[0].completion_tokens, 10);
+});
+
+test("single delta with content plus a complete tool call delivers text and one valid call", async () => {
+  const upstream = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("cd1", {
+          content: "Checking now",
+          tool_calls: [
+            { index: 0, id: "call_cd1", type: "function", function: { name: "lookup", arguments: '{"q":"paris"}' } },
+          ],
+        })
+      );
+      res.end("data: [DONE]\n\n");
+    })
+  );
+  created.push(upstream);
+
+  const res = await post_stream(await gateway_for(upstream, null));
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  const { chunks, dones } = parse_gateway_sse(text);
+  assert.equal(dones, 1);
+  assert.equal(assembled_text(chunks), "Checking now");
+  assert.equal(text.split("Checking now").length - 1, 1); // content not double-delivered
+  assert.equal(text.split("call_cd1").length - 1, 1); // buffered call flushed exactly once
+  assert.equal(frames_carrying_both(chunks, ["content", "tool_calls"]).length, 0); // args validated before delivery
+  const calls = assembled_tool_calls(chunks);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, "call_cd1");
+  assert.equal(calls[0].name, "lookup");
+  assert.deepEqual(JSON.parse(calls[0].arguments), { q: "paris" }); // client got valid JSON, not a truncated call
+});
+
+test("combined delta with args split across two deltas is held until it parses, then flushed once", async () => {
+  const original_args = '{"path":"a.txt"}';
+  const upstream = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      // narration + first (unparseable) args fragment in the SAME delta
+      res.write(
+        sse_chunk("cs1", {
+          content: "Working ",
+          tool_calls: [{ index: 0, id: "call_cs1", type: "function", function: { name: "write", arguments: '{"path"' } }],
+        })
+      );
+      await new Promise((r) => setTimeout(r, 60)); // if held, nothing about the call reaches the client yet
+      res.write(sse_chunk("cs1", { tool_calls: [{ index: 0, function: { arguments: ':"a.txt"}' } }] }));
+      res.end("data: [DONE]\n\n");
+    })
+  );
+  created.push(upstream);
+
+  const started = Date.now();
+  const res = await post_stream(await gateway_for(upstream, null));
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed >= 40, `args should be held until parseable, stream finished in ${elapsed}ms`);
+  const { chunks, dones } = parse_gateway_sse(text);
+  assert.equal(dones, 1);
+  assert.equal(assembled_text(chunks), "Working ");
+  assert.equal(frames_carrying_both(chunks, ["content", "tool_calls"]).length, 0); // partial args never rode a content frame
+  assert.equal(text.split("call_cs1").length - 1, 1);
+  const calls = assembled_tool_calls(chunks);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, "call_cs1");
+  assert.equal(calls[0].arguments, original_args); // stitched fragments equal the original JSON
+  assert.deepEqual(JSON.parse(calls[0].arguments), { path: "a.txt" });
+});
+
+test("combined delta then socket death before args complete discards the partial; backup regenerates once", async () => {
+  const primary = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("cq1", {
+          content: "thinking ",
+          tool_calls: [{ index: 0, id: "call_part_q", type: "function", function: { name: "write", arguments: '{"path"' } }],
+        })
+      );
+      setTimeout(() => res.destroy(), 20); // dies with the combined call still unparseable
+    })
+  );
+  let backup_body = null;
+  const backup = await listen(
+    http.createServer(async (req, res) => {
+      backup_body = JSON.parse(await collect_body(req));
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("cq2", {
+          tool_calls: [
+            { index: 0, id: "call_full_q", type: "function", function: { name: "write", arguments: '{"path":"z.txt"}' } },
+          ],
+        })
+      );
+      res.end("data: [DONE]\n\n");
+    })
+  );
+  created.push(primary, backup);
+
+  const res = await post_stream(await gateway_for(primary, backup));
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  const { chunks, dones } = parse_gateway_sse(text);
+  assert.equal(dones, 1);
+  assert.equal(assembled_text(chunks), "thinking ");
+  assert.ok(!text.includes("call_part_q")); // the abandoned call never reached the client
+  assert.equal(frames_carrying_both(chunks, ["content", "tool_calls"]).length, 0); // no partial args rode a content frame
+  assert.equal(text.split("call_full_q").length - 1, 1); // exactly one call across both legs, no double side effect
+  const calls = assembled_tool_calls(chunks);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, "call_full_q");
+  assert.deepEqual(JSON.parse(calls[0].arguments), { path: "z.txt" });
+  assert.deepEqual(backup_body.messages[backup_body.messages.length - 1], {
+    role: "assistant",
+    content: "thinking ",
+  });
+});
+
+test("combined delta completing after multiple stitching legs: one flush, one [DONE], merged usage", async () => {
+  let primary_hits = 0;
+  const primary = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      primary_hits += 1;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("ml1", {
+          content: "multi ",
+          tool_calls: [{ index: 0, id: "call_leg1_partial", type: "function", function: { name: "write", arguments: '{"a"' } }],
+        })
+      );
+      res.write(
+        `data: ${JSON.stringify({ id: "ml1", object: "chat.completion.chunk", created: 1, model: "test-model", usage: { prompt_tokens: 10, completion_tokens: 2 } })}\n\n`
+      );
+      setTimeout(() => res.destroy(), 20);
+    })
+  );
+  let backup_hits = 0;
+  const backup = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      backup_hits += 1;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (backup_hits === 1) {
+        // second leg also dies with an unflushed call of its own
+        res.write(
+          sse_chunk("ml2", {
+            tool_calls: [{ index: 0, id: "call_leg2_partial", type: "function", function: { name: "write", arguments: '{"b"' } }],
+          })
+        );
+        res.write(
+          `data: ${JSON.stringify({ id: "ml2", object: "chat.completion.chunk", created: 1, model: "kimi-k2", usage: { prompt_tokens: 5, completion_tokens: 1 } })}\n\n`
+        );
+        setTimeout(() => res.destroy(), 20);
+        return;
+      }
+      res.write(
+        sse_chunk("ml3", {
+          tool_calls: [
+            { index: 0, id: "call_final_ml", type: "function", function: { name: "write", arguments: '{"n":42}' } },
+          ],
+        })
+      );
+      res.write(
+        `data: ${JSON.stringify({ id: "ml3", object: "chat.completion.chunk", created: 1, model: "kimi-k2", usage: { prompt_tokens: 15, completion_tokens: 5 } })}\n\n`
+      );
+      res.end("data: [DONE]\n\n");
+    })
+  );
+  created.push(primary, backup);
+
+  const res = await post_stream(await gateway_for(primary, backup));
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  const { chunks, dones } = parse_gateway_sse(text);
+  assert.equal(primary_hits, 1);
+  assert.equal(backup_hits, 2);
+  assert.equal(dones, 1);
+  assert.equal(assembled_text(chunks), "multi "); // leg-0 content forwarded once, never re-delivered
+  assert.ok(!text.includes("call_leg1_partial")); // discarded partials never leak
+  assert.ok(!text.includes("call_leg2_partial"));
+  assert.equal(text.split("call_final_ml").length - 1, 1); // one flush on the surviving leg
+  const calls = assembled_tool_calls(chunks);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(JSON.parse(calls[0].arguments), { n: 42 });
+  // usage-only chunks are held on every leg; only the merged total surfaces
+  const with_usage = chunks.filter((c) => c.usage);
+  assert.equal(with_usage.length, 1);
+  assert.deepEqual(with_usage[0].usage, { prompt_tokens: 30, completion_tokens: 8 });
+  assert.equal(frames_carrying_both(chunks, ["content", "tool_calls"]).length, 0);
+});
+
+test("finish_reason in the same chunk as delta.content keeps the content and finishes exactly once", async () => {
+  const upstream = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(sse_chunk("fr1", { content: "head" }));
+      // final frame narrates AND finishes: content must survive, finish must stay singular
+      res.write(
+        `data: ${JSON.stringify({
+          id: "fr1",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "test-model",
+          choices: [{ index: 0, delta: { content: " tail" }, finish_reason: "stop" }],
+        })}\n\n`
+      );
+      res.end(); // clean close, no [DONE]
+    })
+  );
+  created.push(upstream);
+
+  const res = await post_stream(await gateway_for(upstream, null));
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  const { chunks, dones } = parse_gateway_sse(text);
+  assert.equal(dones, 1);
+  assert.equal(assembled_text(chunks), "head tail"); // finish-accompanying content was not skipped
+  const finals = chunks.filter((c) => c.choices && c.choices[0] && c.choices[0].finish_reason);
+  assert.equal(finals.length, 1); // raw finish held; exactly one synthesized final chunk
+  assert.equal(finals[0].choices[0].finish_reason, "stop");
+  assert.equal(finals[0].id, "fr1");
 });

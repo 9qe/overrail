@@ -1,14 +1,49 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
+const { PassThrough } = require("node:stream");
 
 const {
   AnthropicStreamEncoder,
   anthropic_messages_to_openai,
+  default_read_body,
   openai_to_anthropic_response,
   parse_anthropic_sse,
   createAnthropicMessagesHandler,
 } = require("../lib/anthropic");
+
+// Block types the audit demands be rejected out loud rather than dropped.
+const UNSUPPORTED_BLOCK_TYPES = [
+  "document",
+  "search_result",
+  "thinking",
+  "redacted_thinking",
+  "tool_reference",
+  "web_search_tool_result",
+  "some_future_block",
+];
+
+function capture_error(fn) {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  return null;
+}
+
+function stream_req(buffers, headers = {}) {
+  const req = new PassThrough();
+  req.headers = headers;
+  req.on("error", () => {});
+  for (const buf of buffers) req.write(buf);
+  req.end();
+  return req;
+}
+
+async function drain(req) {
+  if (!req.readableEnded) await new Promise((resolve) => req.once("end", resolve));
+}
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
@@ -104,7 +139,7 @@ test("system + user text with sampling params translates to an OpenAI chat body"
   });
   assert.equal(openai.model, "deepseek");
   assert.equal(openai.max_tokens, 4096);
-  assert.equal(openai.temperature, 1.4); // anthropic 0-1 rescaled to OpenAI 0-2
+  assert.equal(openai.temperature, 0.7); // Anthropic's 0-1 scale, forwarded verbatim (no invented rescaling)
   assert.equal(openai.top_p, 0.9);
   assert.deepEqual(openai.stop, ["\nHuman:", "quick"]);
   assert.deepEqual(openai.messages, [
@@ -241,6 +276,305 @@ test("invalid requests raise structured AnthropicTranslateError", () => {
     assert.equal(caught.status, 400);
     assert.match(caught.message, new RegExp(needle));
   }
+});
+
+// section: object tool_choice forms
+
+test("object tool_choice forms map to OpenAI and every unusable form raises a 400", () => {
+  const with_choice = (tool_choice) =>
+    anthropic_messages_to_openai({ max_tokens: 8, messages: [{ role: "user", content: "hi" }], tool_choice });
+
+  assert.equal(with_choice("auto").tool_choice, "auto");
+  assert.equal(with_choice("any").tool_choice, "required");
+  assert.equal(with_choice("required").tool_choice, "required");
+  assert.equal(with_choice("none").tool_choice, "none");
+  assert.equal(with_choice({ type: "auto" }).tool_choice, "auto");
+  assert.equal(with_choice({ type: "any" }).tool_choice, "required");
+  assert.equal(with_choice({ type: "none" }).tool_choice, "none");
+  assert.deepEqual(with_choice({ type: "tool", name: "lookup" }).tool_choice, {
+    type: "function",
+    function: { name: "lookup" },
+  });
+  assert.deepEqual(with_choice({ type: "function", function: { name: "lookup" } }).tool_choice, {
+    type: "function",
+    function: { name: "lookup" },
+  });
+  assert.equal(with_choice(undefined).tool_choice, undefined);
+  assert.equal(with_choice(null).tool_choice, undefined);
+
+  const rejected = [
+    [{ type: "mcp_tool" }, "mcp_tool"],
+    [{ type: "tool" }, '"tool"'],
+    [{ type: "tool", name: "" }, '"tool"'],
+    [{ type: "function" }, '"function"'],
+    [{ type: "function", function: {} }, '"function"'],
+    [{ type: "required" }, "required"],
+    ["sometimes", "sometimes"],
+    [42, "42"],
+    [["auto"], "auto"],
+  ];
+  for (const [choice, needle] of rejected) {
+    const err = capture_error(() => with_choice(choice));
+    assert.ok(err, `expected tool_choice ${JSON.stringify(choice)} to be rejected, not ignored`);
+    assert.equal(err.name, "AnthropicTranslateError");
+    assert.equal(err.status, 400);
+    assert.match(err.message, new RegExp(needle));
+    assert.match(err.message, /supported forms/);
+  }
+});
+
+// section: sampling params keep Anthropic's own scale
+
+test("temperature and top_p travel on Anthropic's 0-1 scale and bad values raise a 400", () => {
+  const base = { max_tokens: 8, messages: [{ role: "user", content: "hi" }] };
+  assert.equal(anthropic_messages_to_openai({ ...base, temperature: 0 }).temperature, 0);
+  assert.equal(anthropic_messages_to_openai({ ...base, temperature: 0.25 }).temperature, 0.25);
+  assert.equal(anthropic_messages_to_openai({ ...base, temperature: 1 }).temperature, 1);
+  assert.equal(anthropic_messages_to_openai({ ...base, top_p: 0.01 }).top_p, 0.01);
+  assert.equal(anthropic_messages_to_openai({ ...base, top_p: 1 }).top_p, 1);
+
+  for (const bad of [1.5, -0.1, "hot", Number.NaN, Number.POSITIVE_INFINITY, true]) {
+    const err = capture_error(() => anthropic_messages_to_openai({ ...base, temperature: bad }));
+    assert.ok(err, `expected temperature ${String(bad)} to be rejected`);
+    assert.equal(err.name, "AnthropicTranslateError");
+    assert.match(err.message, /temperature/);
+    assert.match(err.message, /between 0 and 1/);
+  }
+  for (const bad of [2, -1]) {
+    const err = capture_error(() => anthropic_messages_to_openai({ ...base, top_p: bad }));
+    assert.ok(err, `expected top_p ${bad} to be rejected`);
+    assert.match(err.message, /top_p/);
+  }
+});
+
+test("top_k is accepted and dropped, never smuggled into another field", () => {
+  const openai = anthropic_messages_to_openai({ max_tokens: 8, top_k: 40, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(openai.top_k, undefined);
+  assert.equal(openai.temperature, undefined);
+  assert.equal(openai.top_p, undefined);
+});
+
+// section: image blocks
+
+test("base64 and url image blocks become OpenAI image_url parts in arrival order", () => {
+  const openai = anthropic_messages_to_openai({
+    max_tokens: 64,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is in these?" },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+          { type: "image", source: { type: "url", url: "https://example.com/cat.png" } },
+          { type: "text", text: "answer briefly" },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(openai.messages, [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what is in these?" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+        { type: "image_url", image_url: { url: "https://example.com/cat.png" } },
+        { type: "text", text: "answer briefly" },
+      ],
+    },
+  ]);
+});
+
+test("an image-only user turn still reaches the model as vision content", () => {
+  const openai = anthropic_messages_to_openai({
+    max_tokens: 64,
+    messages: [
+      { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/gif", data: "R0lGODdh" } }] },
+    ],
+  });
+  assert.deepEqual(openai.messages, [
+    { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/gif;base64,R0lGODdh" } }] },
+  ]);
+});
+
+test("assistant history mixing text, image and tool_use keeps every part", () => {
+  const openai = anthropic_messages_to_openai({
+    max_tokens: 64,
+    messages: [
+      { role: "user", content: "screenshot then open it" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "looking" },
+          { type: "image", source: { type: "base64", media_type: "image/webp", data: "UklGRhoA" } },
+          { type: "tool_use", id: "tc_1", name: "open", input: { url: "x" } },
+        ],
+      },
+    ],
+  });
+  const assistant = openai.messages[1];
+  assert.deepEqual(assistant.content, [
+    { type: "text", text: "looking" },
+    { type: "image_url", image_url: { url: "data:image/webp;base64,UklGRhoA" } },
+  ]);
+  assert.deepEqual(assistant.tool_calls, [
+    { id: "tc_1", type: "function", function: { name: "open", arguments: '{"url":"x"}' } },
+  ]);
+});
+
+test("tool_result content with text and image blocks becomes a parts array on the tool message", () => {
+  const openai = anthropic_messages_to_openai({
+    max_tokens: 64,
+    messages: [
+      { role: "user", content: "capture the screen" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "shot", input: {} }] },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            content: [
+              { type: "text", text: "captured" },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const tool = openai.messages[2];
+  assert.equal(tool.role, "tool");
+  assert.equal(tool.tool_call_id, "t1");
+  assert.deepEqual(tool.content, [
+    { type: "text", text: "captured" },
+    { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+  ]);
+});
+
+test("unsupported image media types and malformed image sources raise a 400 naming the value", () => {
+  const message_with = (block) =>
+    capture_error(() =>
+      anthropic_messages_to_openai({ max_tokens: 8, messages: [{ role: "user", content: [block] }] })
+    );
+
+  const pdf = message_with({ type: "image", source: { type: "base64", media_type: "application/pdf", data: "JV" } });
+  assert.equal(pdf.name, "AnthropicTranslateError");
+  assert.equal(pdf.status, 400);
+  assert.match(pdf.message, /application\/pdf/);
+  assert.match(pdf.message, /image\/jpeg, image\/png, image\/gif, image\/webp/);
+
+  const no_media = message_with({ type: "image", source: { type: "base64", data: "iVBOR" } });
+  assert.match(no_media.message, /undefined/);
+  assert.match(no_media.message, /media_type/);
+
+  const no_source = message_with({ type: "image" });
+  assert.match(no_source.message, /image content block/i);
+  assert.match(no_source.message, /source/);
+
+  const no_data = message_with({ type: "image", source: { type: "base64", media_type: "image/png" } });
+  assert.match(no_data.message, /data/);
+
+  const no_url = message_with({ type: "image", source: { type: "url" } });
+  assert.match(no_url.message, /url/);
+
+  const bad_source_type = message_with({ type: "image", source: { type: "file", media_type: "image/png", data: "x" } });
+  assert.match(bad_source_type.message, /"file"/);
+  assert.match(bad_source_type.message, /base64/);
+});
+
+test("a large base64 image is translated, not clipped; only the body limit gates size", () => {
+  const big_data = "A".repeat(3 * 1024 * 1024);
+  const openai = anthropic_messages_to_openai({
+    max_tokens: 64,
+    messages: [
+      { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: big_data } }] },
+    ],
+  });
+  assert.equal(openai.messages[0].content[0].image_url.url, `data:image/png;base64,${big_data}`);
+});
+
+// section: unsupported blocks are rejected, never dropped
+
+test("unsupported content block types raise a 400 naming the block, in every position", () => {
+  for (const type of UNSUPPORTED_BLOCK_TYPES) {
+    const in_user = capture_error(() =>
+      anthropic_messages_to_openai({ max_tokens: 8, messages: [{ role: "user", content: [{ type, id: 1 }] }] })
+    );
+    for (const [err, where] of [
+      [in_user, "user content"],
+      [
+        capture_error(() =>
+          anthropic_messages_to_openai({
+            max_tokens: 8,
+            messages: [
+              { role: "user", content: "go" },
+              { role: "assistant", content: [{ type }] },
+            ],
+          })
+        ),
+        "assistant content",
+      ],
+      [
+        capture_error(() =>
+          anthropic_messages_to_openai({
+            max_tokens: 8,
+            messages: [
+              { role: "user", content: "go" },
+              { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "f", input: {} }] },
+              { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type }] }] },
+            ],
+          })
+        ),
+        "tool_result content",
+      ],
+      [
+        capture_error(() =>
+          anthropic_messages_to_openai({ max_tokens: 8, system: [{ type }], messages: [{ role: "user", content: "go" }] })
+        ),
+        "system prompt",
+      ],
+    ]) {
+      assert.ok(err, `${where}: expected block type "${type}" to be rejected instead of silently dropped`);
+      assert.equal(err.name, "AnthropicTranslateError", where);
+      assert.equal(err.status, 400, where);
+      assert.match(err.message, new RegExp(`"${type}"`), where);
+      assert.match(err.message, /unsupported/i, where);
+      assert.match(err.message, /does not translate it/, where);
+    }
+  }
+});
+
+test("a non-text block in the system prompt is rejected with the system prompt named", () => {
+  const err = capture_error(() =>
+    anthropic_messages_to_openai({
+      max_tokens: 8,
+      system: [{ type: "image", source: { type: "url", url: "https://example.com/a.png" } }],
+      messages: [{ role: "user", content: "hi" }],
+    })
+  );
+  assert.equal(err.status, 400);
+  assert.match(err.message, /image/);
+  assert.match(err.message, /system prompt/);
+});
+
+test("content blocks that are not objects, and text blocks without string text, are rejected", () => {
+  const string_block = capture_error(() =>
+    anthropic_messages_to_openai({ max_tokens: 8, messages: [{ role: "user", content: ["just a string"] }] })
+  );
+  assert.equal(string_block.status, 400);
+  assert.match(string_block.message, /must be objects/);
+
+  const no_type = capture_error(() =>
+    anthropic_messages_to_openai({ max_tokens: 8, messages: [{ role: "user", content: [{ text: "orphan" }] }] })
+  );
+  assert.equal(no_type.status, 400);
+  assert.match(no_type.message, /missing a string "type" field/);
+
+  const bad_text = capture_error(() =>
+    anthropic_messages_to_openai({ max_tokens: 8, messages: [{ role: "user", content: [{ type: "text", text: 42 }] }] })
+  );
+  assert.equal(bad_text.status, 400);
+  assert.match(bad_text.message, /text content block/);
 });
 
 // section: non-stream response translation
@@ -464,6 +798,96 @@ test("include_ping emits a ping right after message_start", () => {
   assert.equal(events[0].data.type, "message_start");
   assert.equal(events[1].data.type, "ping");
   validate_stream_events(events);
+});
+
+// section: request body size limit
+
+test("default_read_body rejects over the limit with 413 and never buffers the remainder", async () => {
+  const req = stream_req([Buffer.alloc(400, 0x61), Buffer.alloc(400, 0x62), Buffer.alloc(400, 0x63)]);
+  const delivered = [];
+  req.on("data", (chunk) => delivered.push(chunk.length));
+
+  let err = null;
+  let resolved = null;
+  try {
+    resolved = await default_read_body(req, { max_bytes: 1000 });
+  } catch (caught) {
+    err = caught;
+  }
+  assert.equal(resolved, null, "an oversized body must not resolve");
+  assert.equal(err.name, "AnthropicTranslateError");
+  assert.equal(err.status, 413);
+  assert.match(err.message, /1000 byte limit exceeded/);
+  assert.match(err.message, /OVERRAIL_MAX_BODY_BYTES/);
+  // the rejection lands the moment the running total passes the limit, and the
+  // rest is drained off the socket instead of being buffered
+  assert.deepEqual(delivered, [400, 400, 400]);
+  await drain(req);
+});
+
+test("default_read_body accepts a body under the limit and returns it whole", async () => {
+  const body = Buffer.from('{"max_tokens":8}', "utf8");
+  const req = stream_req([body], { "content-length": String(body.length) });
+  const text = await default_read_body(req, { max_bytes: 1000 });
+  assert.equal(text, '{"max_tokens":8}');
+});
+
+test("default_read_body rejects a content-length header that already exceeds the limit", async () => {
+  const req = stream_req([Buffer.from("tiny")], { "content-length": "5000" });
+  let err = null;
+  try {
+    await default_read_body(req, { max_bytes: 1000 });
+  } catch (caught) {
+    err = caught;
+  }
+  assert.equal(err.status, 413);
+  assert.match(err.message, /1000 byte limit exceeded/);
+  await drain(req);
+});
+
+test("default_read_body takes the limit from OVERRAIL_MAX_BODY_BYTES and falls back when it is unusable", async () => {
+  process.env.OVERRAIL_MAX_BODY_BYTES = "300";
+  try {
+    let err = null;
+    try {
+      await default_read_body(stream_req([Buffer.alloc(400, 0x61)]));
+    } catch (caught) {
+      err = caught;
+    }
+    assert.equal(err.status, 413);
+    assert.match(err.message, /300 byte limit exceeded/);
+
+    process.env.OVERRAIL_MAX_BODY_BYTES = "not-a-number";
+    const text = await default_read_body(stream_req([Buffer.alloc(400, 0x61)]));
+    assert.equal(text.length, 400, "an unparseable env value falls back to the 32 MiB default, not to zero");
+  } finally {
+    delete process.env.OVERRAIL_MAX_BODY_BYTES;
+  }
+});
+
+test("handler answers an Anthropic-shaped 413 before the body is fully uploaded", async () => {
+  const dispatch = async () => {
+    throw new Error("dispatch must not run for an oversized body");
+  };
+  const env = await handler_env({ dispatch });
+  const previous = process.env.OVERRAIL_MAX_BODY_BYTES;
+  process.env.OVERRAIL_MAX_BODY_BYTES = "512";
+  try {
+    const res = await post(env.url, {
+      model: "deepseek",
+      max_tokens: 10,
+      messages: [{ role: "user", content: "x".repeat(4000) }],
+    });
+    assert.equal(res.status, 413);
+    const json = await res.json();
+    assert.equal(json.type, "error");
+    assert.match(json.error.message, /512 byte limit exceeded/);
+    assert.match(json.error.message, /OVERRAIL_MAX_BODY_BYTES/);
+  } finally {
+    if (previous === undefined) delete process.env.OVERRAIL_MAX_BODY_BYTES;
+    else process.env.OVERRAIL_MAX_BODY_BYTES = previous;
+    await close(env.server);
+  }
 });
 
 // section: route handler end-to-end (local stub servers only, no provider traffic)

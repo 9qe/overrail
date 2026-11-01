@@ -89,12 +89,12 @@ Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first. Install: `npm
 
 ### What is proven, and what is not
 
-Proven by the local suite (82 tests) and `examples/recovery-benchmark.js`, all against fake upstreams on localhost:
+Proven by the local suite (120 tests) and `examples/benchmark-repeat.js`, all against fake upstreams on localhost:
 
-- An 8,000-delta stream killed at delta 4,000 and at delta 7,900 reassembles **byte-identical** to the scripted answer, with exactly one `[DONE]`, one finish event, one tool call, and merged usage. Measured client-observed stall across the stitch: **16–34 ms**.
-- Malformed SSE, invalid frames, comments, keep-alives, multi-line `data:` payloads, UTF-8 sequences split across network chunks, usage-only chunks and a clean upstream end without `[DONE]` are all handled without corrupting the stream.
-- Anthropic `/v1/messages` request/response/stream translation, including `tool_use` blocks.
-- The recovery journal records what was emitted and what a client acknowledged, and never writes prompt text or tool arguments.
+- An 8,000-delta stream killed at delta 4,000 and at delta 7,900 reassembles **byte-identical** to the scripted answer, with exactly one `[DONE]`, one finish event, one tool call, and merged usage — verified on 11 consecutive runs at each drop point (p50 client-observed stall across the stitch **84 ms** at drop@4000, **45 ms** at drop@7900; percentiles in `docs/benchmark-percentiles.json`).
+- Malformed SSE, invalid frames, comments, keep-alives, multi-line `data:` payloads, UTF-8 sequences split across network chunks, usage-only chunks, `finish_reason` arriving in the same frame as content, a single frame carrying **both** content and tool-call deltas, and a clean upstream end without `[DONE]` are all handled without corrupting the stream or duplicating a call.
+- Anthropic `/v1/messages` request/response/stream translation, including `tool_use` blocks, `tool_result` images, and object-form `tool_choice`. Anything the translator cannot represent is rejected with a 400 that names the field — it does not silently drop your content. See [docs/anthropic-compatibility.md](docs/anthropic-compatibility.md).
+- The recovery journal records what was emitted and what a client acknowledged, never writes prompt text, tool arguments or parameter values, compacts itself under a size bound, and refuses a reused idempotency key whose request differs in **any** generation parameter (`temperature`, `max_tokens`, `top_p`, `tool_choice`, `stop`, `seed`, `response_format`, …) with a 409 that names both request hashes.
 
 Not proven, stated plainly:
 
@@ -211,13 +211,20 @@ On the next request with the same key, continuation history distinguishes four s
 ## Tests and evidence
 
 ```bash
-npm test                                   # 82 tests, no network, no keys
-node examples/chaos-demo.js                # visible mid-stream stitch on localhost mocks
+npm test                                        # 120 tests, no network, no keys
+node examples/chaos-demo.js                     # visible mid-stream stitch on localhost mocks
 node examples/recovery-benchmark.js --out docs/benchmark-results.json
-node examples/live-provider-matrix.js      # real providers; needs funded keys (currently BLOCKED)
+node examples/benchmark-repeat.js 11 --out docs/benchmark-percentiles.json
+node examples/live-provider-matrix.js           # real providers; needs funded keys (currently BLOCKED)
 ```
 
-Suites: `test/edge-stream.test.js` (malformed SSE, UTF-8 splits, multi-line frames, usage-only chunks), `test/midstream.test.js` (stitching, tool buffering), `test/anthropic.test.js` + `test/anthropic-gateway.test.js` (translation and end-to-end `/v1/messages`), `test/recovery.test.js` + `test/recovery-gateway.test.js` (journal, ack route, idempotency), plus gateway/failover/config/usage. Methodology and limits: [docs/benchmarks.md](docs/benchmarks.md), [docs/provider-matrix.md](docs/provider-matrix.md), [docs/recovery-semantics.md](docs/recovery-semantics.md).
+Suites: `test/edge-stream.test.js` (malformed SSE, UTF-8 splits, multi-line frames, combined content+tool deltas, usage-only chunks), `test/midstream.test.js` (stitching, tool buffering), `test/anthropic.test.js` + `test/anthropic-gateway.test.js` (translation and end-to-end `/v1/messages`), `test/recovery.test.js` + `test/recovery-gateway.test.js` (journal, idempotency identity, ack route, compaction), plus gateway/failover/config/usage. Methodology and limits: [docs/benchmarks.md](docs/benchmarks.md), [docs/provider-matrix.md](docs/provider-matrix.md), [docs/recovery-semantics.md](docs/recovery-semantics.md), [docs/anthropic-compatibility.md](docs/anthropic-compatibility.md).
+
+### Request limits and the local trust model
+
+- Request bodies are capped at 32 MiB; raise it with `OVERRAIL_MAX_BODY_BYTES`. An oversized request gets **413** in the dialect of the route you called, refused before the gateway buffers the whole thing.
+- A reused idempotency key whose request differs in any generation parameter gets **409**, and the message names both request hashes and the recovery id.
+- The gateway has **no authentication and no TLS** — it is loopback-only by design, which means any process on your machine can send requests through it, spend your quota, and post recovery acknowledgements. That makes it a convenience for a single-user dev box, not a security boundary. Full statement in [SECURITY.md](SECURITY.md).
 
 ### Design
 

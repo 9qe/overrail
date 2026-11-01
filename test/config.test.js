@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const real_homedir = os.homedir;
-const tmp_dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentrouter-config-"));
+const tmp_dir = fs.mkdtempSync(path.join(os.tmpdir(), "overrail-config-"));
 os.homedir = () => tmp_dir;
 
 const { CONFIG_DIR, CONFIG_PATH, loadConfig, saveConfig, resolveProfile, resolveEnv } = require("../lib/config");
@@ -16,8 +16,8 @@ after(() => {
 });
 
 test("CONFIG paths live under the patched homedir", () => {
-  assert.equal(CONFIG_DIR, path.join(tmp_dir, ".agentrouter"));
-  assert.equal(CONFIG_PATH, path.join(tmp_dir, ".agentrouter", "config.json"));
+  assert.equal(CONFIG_DIR, path.join(tmp_dir, ".overrail"));
+  assert.equal(CONFIG_PATH, path.join(tmp_dir, ".overrail", "config.json"));
 });
 
 test("saveConfig then loadConfig round-trips profiles and chains", () => {
@@ -50,27 +50,27 @@ test("resolveProfile returns the profile or throws with known names", () => {
   assert.equal(resolveProfile(cfg, "deepseek"), cfg.profiles.deepseek);
   assert.throws(
     () => resolveProfile(cfg, "nope"),
-    (err) => err.message === 'unknown profile "nope" — known: deepseek, kimi. Run "agentrouter init" first.'
+    (err) => err.message === 'unknown profile "nope" — known: deepseek, kimi. Run "overrail init" first.'
   );
   assert.throws(
     () => resolveProfile({ profiles: {} }, "nope"),
-    (err) => err.message === 'unknown profile "nope" — known: none. Run "agentrouter init" first.'
+    (err) => err.message === 'unknown profile "nope" — known: none. Run "overrail init" first.'
   );
 });
 
 test("resolveEnv resolves env: refs and reports missing vars", () => {
-  process.env.AGENTROUTER_TEST_PRESENT = "sk-test";
+  process.env.OVERRAIL_TEST_PRESENT = "sk-test";
   try {
     const { env, missing } = resolveEnv({
-      DEEPSEEK_API_KEY: "env:AGENTROUTER_TEST_PRESENT",
-      MOONSHOT_API_KEY: "env:AGENTROUTER_TEST_MISSING_XYZ",
+      DEEPSEEK_API_KEY: "env:OVERRAIL_TEST_PRESENT",
+      MOONSHOT_API_KEY: "env:OVERRAIL_TEST_MISSING_XYZ",
       OPENAI_API_KEY: "ollama",
     });
     assert.equal(env.DEEPSEEK_API_KEY, "sk-test");
     assert.equal(env.MOONSHOT_API_KEY, "");
     assert.equal(env.OPENAI_API_KEY, "ollama");
-    assert.deepEqual(missing, ["AGENTROUTER_TEST_MISSING_XYZ"]);
+    assert.deepEqual(missing, ["OVERRAIL_TEST_MISSING_XYZ"]);
   } finally {
-    delete process.env.AGENTROUTER_TEST_PRESENT;
+    delete process.env.OVERRAIL_TEST_PRESENT;
   }
 });

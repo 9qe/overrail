@@ -1,7 +1,7 @@
-# agentrouter v0.2.0 — Windows Tray App Engineering Spec
+# overrail v0.2.0 — Windows Tray App Engineering Spec
 
 Status: draft. Target: Windows 11, notification area. Core stays CommonJS, zero npm dependencies, Node >= 18.
-This spec builds on the v0.1.0 interfaces in `bin/agentrouter.js`, `lib/gateway.js`, `lib/failover.js`, `lib/usage.js`, `lib/config.js`, `lib/providers.js`.
+This spec builds on the v0.1.0 interfaces in `bin/overrail.js`, `lib/gateway.js`, `lib/failover.js`, `lib/usage.js`, `lib/config.js`, `lib/providers.js`.
 
 ## 1. Goal statement
 
@@ -10,8 +10,8 @@ The tray app adds a control surface over the CLI. It does not replace it.
 - One-click profile switching from the tray menu (writes `cfg.active` via `lib/config.js`).
 - Gateway start/stop with live status (menu title reflects `server.listening` and port).
 - Toast notification when a failover chain step fires (429/500/502/503/504 or network error).
-- Usage pop-up: requests and tokens from `~/.agentrouter/usage.jsonl`, last 7 days and all time.
-- Quick actions: "Copy PowerShell env" and "Run agent with profile" reuse `envLines()` and the `run` command's injection logic from `bin/agentrouter.js`.
+- Usage pop-up: requests and tokens from `~/.overrail/usage.jsonl`, last 7 days and all time.
+- Quick actions: "Copy PowerShell env" and "Run agent with profile" reuse `envLines()` and the `run` command's injection logic from `bin/overrail.js`.
 
 Non-goals: no cloud, no accounts, no telemetry — ever. No editor UI for config.json (the CLI keeps that role). No macOS/Linux in v0.2.
 
@@ -41,7 +41,7 @@ Sidecar embedding, concretely:
 Components:
 
 1. `tray/` — Rust shell: tray icon, menu rendering, toasts, clipboard, job-object supervision, launches the sidecar. Holds no product logic.
-2. `lib/tray-sidecar.js` — new Node process. Owns: config load/save (reuses `lib/config.js`), gateway lifecycle (reuses `lib/gateway.js` `createGateway`, binds 127.0.0.1), usage queries (reuses `lib/usage.js`), env-block generation (port of `envLines()` from `bin/agentrouter.js` into `lib/env-blocks.js` so CLI and tray share one implementation), failover event subscription.
+2. `lib/tray-sidecar.js` — new Node process. Owns: config load/save (reuses `lib/config.js`), gateway lifecycle (reuses `lib/gateway.js` `createGateway`, binds 127.0.0.1), usage queries (reuses `lib/usage.js`), env-block generation (port of `envLines()` from `bin/overrail.js` into `lib/env-blocks.js` so CLI and tray share one implementation), failover event subscription.
 3. `lib/failover.js` — extended with an event hook (section 6).
 4. `lib/gateway.js` — extended: streaming usage capture (section 5), failover hook wiring.
 5. `lib/usage.js` — extended with `summarizeSince(sinceIso)`; `readUsage`/`summarize` unchanged.
@@ -61,7 +61,7 @@ Components:
 |     profile.use        --> loadConfig/saveConfig          |
 |     usage.summary      --> readUsage/summarizeSince       |
 |     env.copy           --> resolveEnv + env-blocks        |
-|     run.agent          --> spawn bin/agentrouter.js run   |
+|     run.agent          --> spawn bin/overrail.js run   |
 |   event writer      <-- failover hooks, gateway state     |
 +----------------------------------------------------------+
 ```
@@ -100,7 +100,7 @@ Sidecar -> tray (events):
 
 ## 4. UI inventory
 
-Tray icon states: idle (gateway stopped), running (gateway listening), error (port conflict or sidecar failure). Tooltips: "agentrouter — gateway stopped" / "agentrouter — gateway on 127.0.0.1:8787".
+Tray icon states: idle (gateway stopped), running (gateway listening), error (port conflict or sidecar failure). Tooltips: "overrail — gateway stopped" / "overrail — gateway on 127.0.0.1:8787".
 
 Menu (exact labels, top to bottom):
 
@@ -141,9 +141,9 @@ Toasts (WinRT ToastNotificationManager, exact copy):
 
 | Event | Title | Body |
 |---|---|---|
-| Failover step | "agentrouter failover" | "deepseek returned http 429 — retrying on openrouter" |
-| All providers failed | "agentrouter failover" | "all providers failed for model \"deepseek\"" |
-| Gateway error | "agentrouter gateway" | "port 8787 in use — gateway not started" |
+| Failover step | "overrail failover" | "deepseek returned http 429 — retrying on openrouter" |
+| All providers failed | "overrail failover" | "all providers failed for model \"deepseek\"" |
+| Gateway error | "overrail gateway" | "port 8787 in use — gateway not started" |
 
 No emoji anywhere in labels or toast copy. Toasts suppressed while the "Failover toasts" checkbox is off (persisted in config.json as `failoverToasts: true`).
 
@@ -173,7 +173,7 @@ if (hooks.onFailover) hooks.onFailover({
 });
 ```
 
-`lib/gateway.js` builds the hooks once and passes them into `withFailover`. The hook appends the same object as a line to `~/.agentrouter/events.jsonl` (new `EVENTS_PATH` export in `lib/config.js`) and calls the sidecar's registered callback, which writes `{"event":"failover",...}` to stdout. The tray shell maps that event to the toast in section 4. Setting `failoverToasts: false` suppresses only the toast, never the JSONL record.
+`lib/gateway.js` builds the hooks once and passes them into `withFailover`. The hook appends the same object as a line to `~/.overrail/events.jsonl` (new `EVENTS_PATH` export in `lib/config.js`) and calls the sidecar's registered callback, which writes `{"event":"failover",...}` to stdout. The tray shell maps that event to the toast in section 4. Setting `failoverToasts: false` suppresses only the toast, never the JSONL record.
 
 Test seam: `withFailover` with a failing then succeeding attempt_fn must emit exactly one `onFailover` object with correct `from`/`to`/`reason`.
 
@@ -187,7 +187,7 @@ M1 — Tray + gateway supervisor (shippable alpha)
 M2 — Profile switching + env copy + run actions
 - Scope: Profiles radio group, `profile.use` with restart-on-switch, clipboard ops, "Run agent with profile..." submenu.
 - Files: `lib/tray-sidecar.js`, `lib/env-blocks.js`, tray menu code.
-- Tests: switch writes `cfg.active` and new gateway serves per-request `<profile>` model field; clipboard content matches `agentrouter env <profile>` output byte for byte; `run.agent` spawns with `CREATE_NEW_CONSOLE` and inherits env.
+- Tests: switch writes `cfg.active` and new gateway serves per-request `<profile>` model field; clipboard content matches `overrail env <profile>` output byte for byte; `run.agent` spawns with `CREATE_NEW_CONSOLE` and inherits env.
 
 M3 — Failover toasts + usage pop-up
 - Scope: failover hooks in lib/failover.js and lib/gateway.js, SSE usage capture, `summarizeSince`, events.jsonl, toasts, Usage submenus, "Failover toasts" checkbox.
@@ -195,7 +195,7 @@ M3 — Failover toasts + usage pop-up
 - Tests: unit — hook emission, SSE scan against a fixture stream with and without a usage chunk, include_usage rejection fallback; manual — live 429 from a mocked upstream produces one toast and one events.jsonl line.
 
 M4 — Signed installer
-- Scope: MSIX or NSIS installer, Start Menu shortcut with AppUserModelID (required for toasts from unpackaged apps), winget manifest (`9qe.agentrouter`), code signing.
+- Scope: MSIX or NSIS installer, Start Menu shortcut with AppUserModelID (required for toasts from unpackaged apps), winget manifest (`9qe.overrail`), code signing.
 - Files: `installer/`, `packaging/winget/`, CI workflow.
 - Code signing reality check: Azure Trusted Signing — published at roughly $9.99/month, requires individual or organization identity validation, gives SmartScreen reputation on a rolling basis (open question: current pricing, validation wait, and individual-account availability). EV certificate — several hundred USD per year plus validation, immediate SmartScreen reputation, hardware token or cloud HSM. Self-signed — free, warns on every install, never builds SmartScreen reputation; acceptable for the alpha, not for M4. Decision due at M4 start; distribution of the unsigned M1-M3 builds is zip + "unblock the file" instructions.
 

@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const real_homedir = os.homedir;
-const tmp_dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentrouter-usage-"));
+const tmp_dir = fs.mkdtempSync(path.join(os.tmpdir(), "overrail-usage-"));
 os.homedir = () => tmp_dir;
 
 const { logUsage, readUsage, summarize } = require("../lib/usage");

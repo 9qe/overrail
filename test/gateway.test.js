@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const real_homedir = os.homedir;
-const tmp_dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentrouter-gateway-"));
+const tmp_dir = fs.mkdtempSync(path.join(os.tmpdir(), "overrail-gateway-"));
 os.homedir = () => tmp_dir;
 
 const { createGateway } = require("../lib/gateway");

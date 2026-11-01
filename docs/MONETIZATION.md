@@ -1,6 +1,6 @@
 # How this project makes money
 
-agentrouter is MIT and the core stays free forever. Money follows three rails, switched on in order. Nothing here is live yet — this page is the plan, published up front.
+overrail is MIT and the core stays free forever. Money follows three rails, switched on in order. Nothing here is live yet — this page is the plan, published up front.
 
 ## Rail 1 — GitHub Sponsors (day one)
 
@@ -8,7 +8,7 @@ Live from day one: https://github.com/sponsors/9qe. Sponsorship covers the fixed
 
 ## Rail 2 — Pro desktop build (after ~1,000 stars)
 
-Once the project has roughly 1,000 stars and a real user base to validate demand, a paid desktop tier ships: agentrouter Pro.
+Once the project has roughly 1,000 stars and a real user base to validate demand, a paid desktop tier ships: overrail Pro.
 
 What Pro adds:
 

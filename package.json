@@ -1,10 +1,10 @@
 {
-  "name": "agentrouter",
-  "version": "0.1.0",
+  "name": "overrail",
+  "version": "0.2.0",
   "description": "Any agent. Any model. One command - with failover.",
-  "main": "bin/agentrouter.js",
+  "main": "bin/overrail.js",
   "bin": {
-    "agentrouter": "bin/agentrouter.js"
+    "overrail": "bin/overrail.js"
   },
   "scripts": {
     "test": "node --test"
@@ -29,6 +29,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/9qe/agentrouter.git"
+    "url": "https://github.com/9qe/overrail.git"
   }
 }

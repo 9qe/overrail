@@ -12,14 +12,14 @@ Use GitHub Security Advisories (Security tab -> Report a vulnerability) for a pr
 
 ## Scope
 
-- The local gateway (`agentrouter serve`)
+- The local gateway (`overrail serve`)
 - Environment-variable handling (profile env resolution and injection)
 - Failover logic
 
 ## Design stance
 
 - The gateway binds to `127.0.0.1` only. It never listens on a network interface.
-- API keys are read from environment variables and are never written to disk by the tool. `~/.agentrouter/usage.jsonl` contains token counts, provider name, model, and a timestamp — no keys, no prompts, no request bodies.
+- API keys are read from environment variables and are never written to disk by the tool. `~/.overrail/usage.jsonl` contains token counts, provider name, model, and a timestamp — no keys, no prompts, no request bodies.
 - There is no telemetry.
 
 ## Known limitation

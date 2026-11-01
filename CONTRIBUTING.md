@@ -1,12 +1,12 @@
 # Contributing
 
-agentrouter is a zero-dependency Node.js CLI that swaps model providers under AI agent CLIs, with a local gateway and failover.
+overrail is a zero-dependency Node.js CLI that swaps model providers under AI agent CLIs, with a local gateway and failover.
 
 ## Setup
 
 - Node >= 18. No `npm install` needed — there are zero dependencies.
 - Tests: `node --test`
-- Try the CLI locally: `node bin/agentrouter.js help`
+- Try the CLI locally: `node bin/overrail.js help`
 
 ## Style
 
@@ -23,4 +23,4 @@ agentrouter is a zero-dependency Node.js CLI that swaps model providers under AI
 
 ## Good first issues
 
-Open issues are on GitHub: https://github.com/9qe/agentrouter/issues
+Open issues are on GitHub: https://github.com/9qe/overrail/issues

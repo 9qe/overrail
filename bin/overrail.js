@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// agentrouter CLI — CommonJS, zero dependencies, Node >= 18, Windows-first.
-// Usage: agentrouter <command> [args] [-- command...]
+// overrail CLI — CommonJS, zero dependencies, Node >= 18, Windows-first.
+// Usage: overrail <command> [args] [-- command...]
 "use strict";
 
 const { spawn } = require("child_process");
@@ -34,7 +34,7 @@ function loadOrDie() {
   try {
     return config.loadConfig();
   } catch (err) {
-    fail("Failed to load config: " + err.message + " (run: agentrouter init)");
+    fail("Failed to load config: " + err.message + " (run: overrail init)");
   }
 }
 
@@ -62,7 +62,7 @@ function printShellBlocks(profile) {
   print("cmd.exe:");
   for (const line of cmd.lines) print("  " + line);
   print("");
-  print(`Or run directly: agentrouter run ${profile.__name} -- <your-cli>`);
+  print(`Or run directly: overrail run ${profile.__name} -- <your-cli>`);
 }
 
 function cmdInit() {
@@ -109,7 +109,7 @@ function cmdList() {
   const cfg = loadOrDie();
   const names = Object.keys(cfg.profiles || {});
   if (names.length === 0) {
-    print("No profiles. Run: agentrouter init");
+    print("No profiles. Run: overrail init");
     return;
   }
   for (const name of names) {
@@ -120,7 +120,7 @@ function cmdList() {
 }
 
 function cmdUse(name) {
-  if (!name) fail("Usage: agentrouter use <profile>");
+  if (!name) fail("Usage: overrail use <profile>");
   const cfg = loadOrDie();
   try {
     config.resolveProfile(cfg, name);
@@ -144,7 +144,7 @@ function maskValue(v) {
 
 function cmdCurrent() {
   const cfg = loadOrDie();
-  if (!cfg.active) fail("No active profile. Run: agentrouter use <profile>");
+  if (!cfg.active) fail("No active profile. Run: overrail use <profile>");
   const profile = config.resolveProfile(cfg, cfg.active);
   print("Active profile: " + cfg.active);
   const env = profile.env || {};
@@ -154,7 +154,7 @@ function cmdCurrent() {
 }
 
 function cmdEnv(name) {
-  if (!name) fail("Usage: agentrouter env <profile>");
+  if (!name) fail("Usage: overrail env <profile>");
   const cfg = loadOrDie();
   let profile;
   try {
@@ -198,7 +198,7 @@ function cmdRun(args) {
   }
 
   if (!name) name = cfg.active;
-  if (!name) fail("No profile given and no active profile. Run: agentrouter use <profile> or agentrouter run <profile> -- <command>");
+  if (!name) fail("No profile given and no active profile. Run: overrail use <profile> or overrail run <profile> -- <command>");
 
   let profile;
   try {
@@ -207,11 +207,11 @@ function cmdRun(args) {
     fail(err.message);
   }
 
-  if (command.length === 0) fail("Usage: agentrouter run [profile] -- <command...>");
+  if (command.length === 0) fail("Usage: overrail run [profile] -- <command...>");
 
   const { env: resolved, missing } = config.resolveEnv(profile.env || {});
   if (missing.length > 0) {
-    fail(`Missing environment variable(s): ${missing.join(", ")} — set them first (see: agentrouter env ${name})`);
+    fail(`Missing environment variable(s): ${missing.join(", ")} — set them first (see: overrail env ${name})`);
   }
 
   const childEnv = { ...process.env, ...resolved, ...derivedEnv(name, profile) };
@@ -246,14 +246,14 @@ function cmdServe(args) {
 
   server.on("error", (err) => {
     if (err && err.code === "EADDRINUSE") {
-      fail("port in use, try: agentrouter serve --port " + (port + 1));
+      fail("port in use, try: overrail serve --port " + (port + 1));
     }
     fail("Gateway error: " + (err && err.message ? err.message : String(err)));
   });
 
   server.listen(port, "127.0.0.1", () => {
     // Bound to loopback only — keep the gateway off the network.
-    print(`agentrouter gateway listening on http://127.0.0.1:${port}`);
+    print(`overrail gateway listening on http://127.0.0.1:${port}`);
     print("Point any OpenAI-compatible client at it. Model field: '<profile>' or '<profile>/<model>'.");
     print("Failover chain (default): " + (cfg.chains && cfg.chains.default ? cfg.chains.default.join(" -> ") : "(none)"));
   });
@@ -312,18 +312,18 @@ function cmdChains() {
 
 function usageText() {
   return [
-    "agentrouter — swap model providers under AI agent CLIs",
+    "overrail — swap model providers under AI agent CLIs",
     "",
-    "  agentrouter init                create config, merge provider presets",
-    "  agentrouter list                show profiles (* = active)",
-    "  agentrouter use <profile>       set active profile, print shell env",
-    "  agentrouter current             show active profile with masked env",
-    "  agentrouter env <profile>       print PowerShell / cmd.exe env blocks",
-    "  agentrouter run [profile] -- <cmd>  run a CLI with the profile's env injected",
-    "  agentrouter serve [--port N]    start the local gateway (127.0.0.1)",
-    "  agentrouter usage [--limit N]   show token/request usage summary",
-    "  agentrouter chains              show failover chains",
-    "  agentrouter help                this help",
+    "  overrail init                create config, merge provider presets",
+    "  overrail list                show profiles (* = active)",
+    "  overrail use <profile>       set active profile, print shell env",
+    "  overrail current             show active profile with masked env",
+    "  overrail env <profile>       print PowerShell / cmd.exe env blocks",
+    "  overrail run [profile] -- <cmd>  run a CLI with the profile's env injected",
+    "  overrail serve [--port N]    start the local gateway (127.0.0.1)",
+    "  overrail usage [--limit N]   show token/request usage summary",
+    "  overrail chains              show failover chains",
+    "  overrail help                this help",
     "",
     "Config: " + config.CONFIG_PATH,
   ].join("\n");

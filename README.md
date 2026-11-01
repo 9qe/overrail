@@ -1,19 +1,40 @@
 # overrail
 
-**Any agent. Any model. One command — with failover.**
+**Kill an LLM provider mid-sentence. Your agent keeps streaming.**
 
 <p align="center">
   <img src="docs/banner.svg" alt="overrail banner" width="880">
 </p>
-<p align="center">
-  <img src="docs/demo-terminal.svg" alt="overrail terminal demo" width="880">
-</p>
 
 Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first, MIT. v0.2.0. Not on npm yet — install straight from GitHub.
 
-## Why
+## Watch a provider die mid-sentence — 30 seconds, no API keys
 
-Agent CLIs are wired to one vendor. Switching means env-var archaeology and lost work mid-task. overrail swaps the model under the agent and fails over automatically when a provider rate-limits you.
+```bash
+git clone https://github.com/9qe/overrail.git
+cd overrail
+node examples/chaos-demo.js
+```
+
+The demo kills the primary mock upstream after three tokens. The next provider receives the partial reply as an assistant prefill and continues on the same client stream:
+
+```
+client <- "The"
+client <- " quick"
+client <- " brown"
+client <- " jumps"
+client <- " over the lazy dog."
+client <- finish_reason=stop, merged usage: {"prompt_tokens":12,"completion_tokens":6}
+client <- [DONE] (exactly one, after the full stitched reply)
+```
+
+Against real providers, set `OVERRAIL_CHAOS=529` (primary returns overloaded) or `OVERRAIL_CHAOS=midstream_drop@100` (primary's socket dies after 100 content events) and run any request through `overrail serve`.
+
+## Why not LiteLLM, OpenRouter, or another proxy
+
+- **No cloud middleman.** Keys stay in your environment; requests go from your machine straight to the provider. Nothing phones home.
+- **No dependency tree.** Zero dependencies, CommonJS, small enough to audit in one sitting. No Python, no Docker, no SDK.
+- **Mid-stream stitching, not just retries.** Catching a 429 before the first token is table stakes. overrail also catches a severed SSE socket mid-generation and stitches the remainder via assistant prefill — so a 400-line file at token 300 doesn't die at token 300, and you don't pay twice for the tokens you already received.
 
 ## Quickstart
 

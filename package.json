@@ -7,7 +7,7 @@
     "overrail": "bin/overrail.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node scripts/run-tests.js"
   },
   "engines": {
     "node": ">=18"

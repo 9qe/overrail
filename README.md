@@ -6,7 +6,7 @@
   <img src="docs/banner.svg" alt="overrail banner" width="880">
 </p>
 
-Free and open source (MIT). Runs entirely on your computer. v0.2.0.
+Free and open source (MIT). Runs entirely on your computer. v0.3.0.
 
 ## What it does, in plain English
 
@@ -81,7 +81,7 @@ Zero-dependency Node.js CLI (CommonJS, Node >= 18), Windows-first. Install: `npm
 
 - **No cloud middleman.** Keys stay in your environment; requests go from your machine straight to the provider. Nothing phones home.
 - **No dependency tree.** Zero dependencies, CommonJS, small enough to audit in one sitting. No Python, no Docker, no SDK.
-- **Mid-stream stitching, not just retries.** Catching a 429 before the first token is table stakes. overrail also catches a severed SSE socket mid-generation and stitches the remainder via assistant prefill — so a 400-line file at token 300 doesn't die at token 300, and you don't pay twice for the tokens you already received.
+- **Mid-stream stitching, not just retries.** Most routers retry requests that fail before the first token. overrail also catches a severed SSE socket mid-generation and stitches the remainder via assistant prefill, including tool calls, so a 400-line file at token 300 doesn't die at token 300 and you don't pay twice for the tokens you already received.
 
 ### Chaos testing against real providers
 
@@ -96,10 +96,10 @@ It does **not** serve Anthropic's `/v1/messages` — don't point `claude` at it.
 Point your tools at it:
 
 ```
-claude   codex   aider   curl
-   \       |       |      /
-    \      |       |     /
-     +-----+---+---+----+
+ aider   codex   curl   continue
+   \       |      |       /
+    \      |      |      /
+     +-----+------+-----+
              |
              v
       overrail serve
@@ -149,7 +149,8 @@ If a provider returns 429, 500, 502, 503, or 504, or the connection fails, the g
 - **Env injection.** `overrail run deepseek -- claude` launches Claude Code pointed at DeepSeek using your own `DEEPSEEK_API_KEY`. Your workflow does not change; the model under it does.
 - **Local gateway.** `overrail serve` runs an OpenAI-compatible endpoint (`POST /v1/chat/completions`, `GET /v1/models`) on http://127.0.0.1:8787, bound to 127.0.0.1 only.
 - **Failover.** When a provider returns 429, 500, 502, 503, 504, or 529, or the network errors out, the gateway moves to the next profile in the chain. Default: `deepseek -> kimi -> openrouter -> ollama`. Local: `ollama`.
-- **Mid-stream failover.** If the upstream socket dies mid-response, the gateway replays your messages plus the partial reply as an assistant prefill to the next provider and stitches the rest onto the same stream. The client sees one continuous response, a single `[DONE]`, and merged token usage. Tool-call arguments are buffered until the JSON is complete, with SSE keep-alives during long calls. Streams that die mid-tool-call with no text cannot be continued safely and are dropped.
+- **Mid-stream failover.** If the upstream socket dies mid-response, the gateway replays your messages plus the partial reply as an assistant prefill (DeepSeek: `prefix: true` on its beta endpoint; providers that reject a trailing assistant message get a constrained continue prompt instead). The client sees one continuous response, a single `[DONE]`, and merged token usage.
+- **Tool-call recovery.** Tool-call arguments are buffered until the JSON is complete, with SSE keep-alives during long calls. Because partial calls never reach the client, a drop mid-tool-call just discards the buffer and regenerates the call on the backup provider. Calls that already completed are passed to the backup as finished history, so they're never generated twice.
 - **Chaos testing.** Set `OVERRAIL_CHAOS=529` to make the first upstream attempt return 529, or `OVERRAIL_CHAOS=midstream_drop@100` to kill the primary stream after 100 content events. Reproduce a failover on your own machine in 30 seconds, no real outage required.
 - **Usage log.** Gateway requests are appended to `~/.overrail/usage.jsonl` (provider, model, and token counts; streaming responses are logged when the upstream reports usage). Run `overrail usage` to view it.
 

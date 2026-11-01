@@ -1,20 +1,22 @@
 # overrail launch kit
 
-Everything needed to announce v0.1.0. Record the GIF first, then post. Repo: https://github.com/9qe/overrail
+Everything needed to announce v0.3.0. Record the GIF first, then post. Repo: https://github.com/9qe/overrail
 
 ## Show HN
 
-Candidate titles:
+Title:
 
-1. Show HN: Overrail — run Claude Code on DeepSeek with automatic failover
-2. Show HN: Overrail — swap the model under any coding agent, with failover
-3. Show HN: Overrail — a local OpenAI-compatible gateway with provider failover
+Show HN: Overrail – Local LLM gateway that stitches severed SSE streams mid-generation
 
 Post body:
 
-overrail is a zero-dependency Node.js CLI (MIT, Windows-first, Node >= 18) that does two things. First, env injection: `overrail run deepseek -- claude` launches Claude Code pointed at DeepSeek using your own DEEPSEEK_API_KEY — no config surgery, no exporting env vars by hand. Second, a local gateway: `overrail serve` starts an OpenAI-compatible endpoint at http://127.0.0.1:8787 (POST /v1/chat/completions, GET /v1/models). If a provider returns 429, 500, 502, 503, or 504, or the connection drops, the gateway fails over down the chain: deepseek -> kimi -> openrouter -> ollama. Gateway requests are logged to ~/.overrail/usage.jsonl, viewable with `overrail usage`.
+Local proxies retry on 429s. But when a provider's socket dies 45 seconds into a 400-line file, most routers kill the stream and you lose the tokens you paid for.
 
-Built because agent CLIs are wired to one vendor, and switching mid-task means env-var archaeology and lost work. A rate limit should not end a coding session. Honest about v0.1.0 scope: env injection, the gateway, failover chains, and the usage log all work today. No tray app yet, no cost estimates, no smart routing — that is the roadmap. Install: `npx overrail init`. Keys never leave your machine, there is no telemetry, and the gateway binds to 127.0.0.1 only.
+overrail is a zero-dependency Node.js gateway (MIT, `npx overrail init`) that catches a severed SSE socket mid-generation and continues on the next provider. The partial reply goes back as an assistant prefill (DeepSeek: `prefix: true` on its beta endpoint; providers that reject a trailing assistant message get a constrained continue prompt). Tool calls are buffered until their JSON completes, so a drop mid-tool-call just discards the buffer and regenerates the call on the backup. Completed calls are passed as finished history, never generated twice. The client sees one continuous stream, one [DONE], and merged token usage.
+
+Try it without keys: clone the repo and run `node examples/chaos-demo.js`. Against real providers: `OVERRAIL_CHAOS=midstream_drop@100`.
+
+Scope: OpenAI-compatible chat-completions only. No /v1/messages yet, so Claude Code uses `overrail run` (provider switching, no failover). Keys never leave localhost. No telemetry. Gateway binds to 127.0.0.1.
 
 Etiquette:
 

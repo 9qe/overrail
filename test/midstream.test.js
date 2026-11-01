@@ -199,6 +199,90 @@ test("OVERRAIL_CHAOS=midstream_drop@2 continues with the partial content prefill
   }
 });
 
+test("drop mid-tool-call discards the partial call and regenerates on the backup", async () => {
+  const deepseek = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("u1", {
+          tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "write", arguments: '{"path":' } }],
+        })
+      );
+      setTimeout(() => res.destroy(), 20);
+    })
+  );
+  let kimi_body = null;
+  const kimi = await listen(
+    http.createServer(async (req, res) => {
+      kimi_body = JSON.parse(await collect_body(req));
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("u2", {
+          tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "write", arguments: '{"path":"a.txt"}' } }],
+        })
+      );
+      res.end("data: [DONE]\n\n");
+    })
+  );
+  created.push(deepseek, kimi);
+
+  const res = await post_stream(await gateway_for(deepseek, kimi));
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.equal(kimi_body.messages.length, 1); // original request, no prefill needed
+  assert.ok(text.includes('"name":"write"'));
+  assert.ok(text.includes("a.txt"));
+  assert.equal(text.split("call_1").length - 1, 1); // the call reaches the client exactly once
+  assert.equal(text.split("data: [DONE]").length - 1, 1);
+});
+
+test("completed tool calls continue as synthesized history on the backup", async () => {
+  const deepseek = await listen(
+    http.createServer(async (req, res) => {
+      await collect_body(req);
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("v1", {
+          tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } }],
+        })
+      );
+      res.write(
+        sse_chunk("v1", {
+          tool_calls: [{ index: 1, id: "call_2", type: "function", function: { name: "write", arguments: '{"path":' } }],
+        })
+      );
+      setTimeout(() => res.destroy(), 20);
+    })
+  );
+  let kimi_body = null;
+  const kimi = await listen(
+    http.createServer(async (req, res) => {
+      kimi_body = JSON.parse(await collect_body(req));
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        sse_chunk("v2", {
+          tool_calls: [{ index: 1, id: "call_2", type: "function", function: { name: "write", arguments: '{"path":"b.txt"}' } }],
+        })
+      );
+      res.end("data: [DONE]\n\n");
+    })
+  );
+  created.push(deepseek, kimi);
+
+  const res = await post_stream(await gateway_for(deepseek, kimi));
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  const history = kimi_body.messages[kimi_body.messages.length - 2];
+  assert.equal(history.role, "assistant");
+  assert.equal(history.tool_calls[0].function.name, "read");
+  const tool_result = kimi_body.messages[kimi_body.messages.length - 1];
+  assert.equal(tool_result.role, "tool");
+  assert.equal(tool_result.tool_call_id, "call_1");
+  assert.ok(text.includes("b.txt"));
+  assert.equal(text.split("call_1").length - 1, 1); // first call not duplicated
+});
+
 test("tool-call argument deltas are held until the JSON is complete", async () => {
   const deepseek = await listen(
     http.createServer(async (req, res) => {

@@ -1,0 +1,34 @@
+{
+  "name": "agentrouter",
+  "version": "0.1.0",
+  "description": "Any agent. Any model. One command - with failover.",
+  "main": "bin/agentrouter.js",
+  "bin": {
+    "agentrouter": "bin/agentrouter.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "aider",
+    "deepseek",
+    "kimi",
+    "openrouter",
+    "ollama",
+    "llm",
+    "agent",
+    "failover",
+    "gateway",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/9qe/agentrouter.git"
+  }
+}
